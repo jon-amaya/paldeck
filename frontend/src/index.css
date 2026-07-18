@@ -1,0 +1,8 @@
+/* minimal reset — the real look lives in theme.css */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; }
+html, body, #root { height: 100%; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

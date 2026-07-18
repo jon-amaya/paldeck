@@ -1,0 +1,13 @@
+# build output
+/paldeck
+/paldeck.exe
+
+# local state
+*.db
+*.db-shm
+*.db-wal
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
