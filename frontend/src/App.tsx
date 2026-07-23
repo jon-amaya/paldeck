@@ -1,12 +1,22 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type CSSProperties } from 'react'
 import './theme.css'
 import logo from './assets/logo.png'
-import type { CreatedServer, CreateServerInput, LifecycleAction, PendingAction, Server } from './types'
+import { ACCENTS, applyAccent, getSavedAccentId } from './accent'
+import type {
+  CreatedServer,
+  CreateServerInput,
+  LifecycleAction,
+  PendingAction,
+  Server,
+  ServerMetrics,
+} from './types'
 import { api } from './api'
-import { ServerRow } from './components/ServerRow'
-import { ServerDetail } from './components/ServerDetail'
+import { ServerCard } from './components/ServerRow'
+import { ServerDetail, type DetailTab } from './components/ServerDetail'
 import { NewServerModal } from './components/NewServerModal'
 import { CreatedModal } from './components/CreatedModal'
+
+const APP_VERSION = 'v0.4-dev'
 
 // Sidebar nav icons — simple 24px strokes, colored via currentColor.
 const IcServers = () => (
@@ -21,6 +31,12 @@ const IcMap = () => (
 const IcGear = () => (
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.2 5.2l2.1 2.1M16.7 16.7l2.1 2.1M18.8 5.2l-2.1 2.1M7.3 16.7l-2.1 2.1" /></svg>
 )
+const IcPulse = () => (
+  <svg viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6" /></svg>
+)
+const IcUsers = () => (
+  <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><circle cx="17" cy="9" r="2.6" /><path d="M15.5 14.2c2.7.3 4.9 2.5 4.9 5.8" /></svg>
+)
 
 export default function App() {
   const [servers, setServers] = useState<Server[]>([])
@@ -32,13 +48,26 @@ export default function App() {
   // Navigation without a router: null = server list, otherwise the open
   // server's id. The detail always renders fresh data from the polled list.
   const [openId, setOpenId] = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<DetailTab | undefined>(undefined)
+  const [showSettings, setShowSettings] = useState(false)
+  // Per-running-server metrics for the home stats + live player counts.
+  const [metricsById, setMetricsById] = useState<Record<string, ServerMetrics>>({})
   // The success dialog reveals the admin password once, right after create.
   const [created, setCreated] = useState<CreatedServer | null>(null)
 
   // Poll the list every 5s. Re-renders never unmount an open LogConsole.
   const refresh = useCallback(async () => {
     try {
-      setServers(await api.list())
+      const list = await api.list()
+      setServers(list)
+      // metrics for running servers, in parallel; failures just leave gaps
+      const running = list.filter((s) => s.status === 'running')
+      const results = await Promise.allSettled(running.map((s) => api.metrics(s.id)))
+      const m: Record<string, ServerMetrics> = {}
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') m[running[i].id] = r.value
+      })
+      setMetricsById(m)
     } catch (e) {
       setError((e as Error).message)
     }
@@ -93,6 +122,23 @@ export default function App() {
 
   const open = servers.find((x) => x.id === openId)
   const runningCount = servers.filter((x) => x.status === 'running').length
+  const playersOnline = Object.values(metricsById).reduce((n, m) => n + (m.players ?? 0), 0)
+
+  // one navigation door: switching view always resets the settings page and
+  // the deep-link tab intent
+  const openServer = (id: string | null, tab?: DetailTab) => {
+    setShowSettings(false)
+    setDetailTab(tab)
+    setOpenId(id)
+  }
+  const openFirstAt = (tab: DetailTab) => {
+    const target = servers.find((s) => s.status === 'running') ?? servers[0]
+    if (!target) {
+      setError('Create a server first — Pals and Map live inside a server.')
+      return
+    }
+    openServer(target.id, tab)
+  }
 
   return (
     <div className="shell">
@@ -106,31 +152,38 @@ export default function App() {
         </div>
 
         <div className="sect">Manage</div>
-        <button className={`nav ${openId === null ? 'on' : ''}`} onClick={() => setOpenId(null)}>
+        <button
+          className={`nav ${openId === null && !showSettings ? 'on' : ''}`}
+          onClick={() => openServer(null)}
+        >
           <span className="ic"><IcServers /></span> Servers
         </button>
         <div className="subnav">
           {servers.map((s) => (
             <button
               key={s.id}
-              className={`subitem ${s.status === 'running' ? 'run' : ''} ${openId === s.id ? 'on' : ''}`}
-              onClick={() => setOpenId(s.id)}
+              className={`subitem ${s.status === 'running' ? 'run' : ''} ${openId === s.id && !showSettings ? 'on' : ''}`}
+              onClick={() => openServer(s.id)}
             >
               <i /> {s.name}
             </button>
           ))}
         </div>
-        <div className="nav soon" title="Pal search — planned">
-          <span className="ic"><IcPaw /></span> Pals <span className="soon-tag">soon</span>
-        </div>
-        <div className="nav soon" title="World map — planned">
-          <span className="ic"><IcMap /></span> Map <span className="soon-tag">soon</span>
-        </div>
+        <button className="nav" onClick={() => openFirstAt('Pals')} title="Pal search">
+          <span className="ic"><IcPaw /></span> Pals
+        </button>
+        <button className="nav" onClick={() => openFirstAt('Map')} title="World map">
+          <span className="ic"><IcMap /></span> Map
+        </button>
 
         <div className="sect">System</div>
-        <div className="nav soon" title="App settings — planned">
-          <span className="ic"><IcGear /></span> Settings <span className="soon-tag">soon</span>
-        </div>
+        <button
+          className={`nav ${showSettings ? 'on' : ''}`}
+          onClick={() => setShowSettings(true)}
+          title="Panel info & settings"
+        >
+          <span className="ic"><IcGear /></span> Settings
+        </button>
 
         <div className="side-foot">
           <i className={runningCount > 0 ? 'up' : ''} /> docker · {runningCount} of {servers.length} running
@@ -145,16 +198,37 @@ export default function App() {
             <i className={runningCount > 0 ? 'up' : ''} /> {runningCount} of {servers.length} running
           </span>
         </div>
-        {open ? (
+        {showSettings ? (
+          <AppSettings servers={servers} running={runningCount} />
+        ) : open ? (
           <ServerDetail
             s={open}
             pending={pending[open.id]}
-            onBack={() => setOpenId(null)}
+            initialTab={detailTab}
+            onBack={() => openServer(null)}
             onAction={action}
             onDelete={remove}
           />
         ) : (
           <>
+            <div className="stat-grid">
+              <div className="stat-tile">
+                <span className="stat-ic"><IcServers /></span>
+                <div><small>Servers</small><b>{servers.length}</b></div>
+              </div>
+              <div className={`stat-tile ${runningCount > 0 ? 'stat-good' : ''}`}>
+                <span className="stat-ic"><IcPulse /></span>
+                <div><small>Running</small><b>{runningCount}</b></div>
+              </div>
+              <div className={`stat-tile ${playersOnline > 0 ? 'stat-accent' : ''}`}>
+                <span className="stat-ic"><IcUsers /></span>
+                <div><small>Players online</small><b>{playersOnline}</b></div>
+              </div>
+              <div className="stat-tile">
+                <span className="stat-ic"><IcGear /></span>
+                <div><small>Panel</small><b className="mono">{APP_VERSION}</b></div>
+              </div>
+            </div>
             <div className="mhead">
               <h1>Servers</h1>
               <button className="solid" onClick={() => setShowNew(true)}>
@@ -167,29 +241,17 @@ export default function App() {
                 No servers yet. Hit <b>+ New server</b> — the first one pulls the Palworld image.
               </div>
             ) : (
-              <div className="stable-wrap">
-                <table className="stable">
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Status</th>
-                      <th>Players</th>
-                      <th>Ports</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {servers.map((s) => (
-                      <ServerRow
-                        key={s.id}
-                        s={s}
-                        pending={pending[s.id]}
-                        onAction={action}
-                        onOpen={setOpenId}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+              <div className="cards">
+                {servers.map((s) => (
+                  <ServerCard
+                    key={s.id}
+                    s={s}
+                    pending={pending[s.id]}
+                    metrics={metricsById[s.id]}
+                    onAction={action}
+                    onOpen={(sid) => openServer(sid)}
+                  />
+                ))}
               </div>
             )}
           </>
@@ -204,5 +266,58 @@ export default function App() {
         </div>
       )}
     </div>
+  )
+}
+
+// Panel-level info page (sidebar → Settings). Real knobs (auth, listen
+// address, backup policy) arrive with the sharing work — spec 005.
+function AppSettings({ servers, running }: { servers: Server[]; running: number }) {
+  const [accentId, setAccentId] = useState(getSavedAccentId)
+
+  const pickAccent = (id: string) => {
+    applyAccent(id)
+    setAccentId(id)
+  }
+
+  return (
+    <>
+      <div className="mhead">
+        <h1>Settings</h1>
+      </div>
+
+      <div className="pd-label" style={{ marginTop: 4 }}>Appearance</div>
+      <div className="accent-row">
+        {ACCENTS.map((a) => (
+          <button
+            key={a.id}
+            className={`accent-swatch ${accentId === a.id ? 'on' : ''}`}
+            style={{ background: a.acc, '--asw': a.acc } as CSSProperties}
+            onClick={() => pickAccent(a.id)}
+            title={a.name}
+            aria-label={`Accent: ${a.name}`}
+          />
+        ))}
+        <span className="note" style={{ marginLeft: 4 }}>{ACCENTS.find((a) => a.id === accentId)?.name}</span>
+      </div>
+
+      <div className="pd-label" style={{ marginTop: 20 }}>Panel info</div>
+      <div className="tiles">
+        <div className="tile"><small>Panel</small><b>Paldeck {APP_VERSION}</b></div>
+        <div className="tile"><small>Servers</small><b>{servers.length} ({running} running)</b></div>
+        <div className="tile"><small>Runtime</small><b>Docker Engine · local</b></div>
+        <div className="tile"><small>State</small><b className="mono">paldeck.db</b></div>
+        <div className="tile"><small>Server image</small><b className="mono">thijsvanloef/palworld-server-docker</b></div>
+        <div className="tile"><small>Port pools</small><b className="mono">8211+ · 27015+ · 25575+ · 8212+</b></div>
+      </div>
+      <p className="note" style={{ marginTop: 14 }}>
+        Panel configuration (listen address, database path) is set via the
+        <span className="mono"> PALDECK_ADDR</span> and
+        <span className="mono"> PALDECK_DB</span> environment variables.
+        Authentication and remote access land with the sharing work (spec 005).
+        Project docs: <span className="mono">docs/CONSTITUTION.md</span> ·{' '}
+        <span className="mono">docs/ROADMAP.md</span> ·{' '}
+        <span className="mono">specs/</span>.
+      </p>
+    </>
   )
 }

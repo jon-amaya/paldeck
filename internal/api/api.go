@@ -31,10 +31,30 @@ func New(st *store.Store, dk *docker.Docker, web fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/servers", a.list)
 	mux.HandleFunc("POST /api/servers", a.create)
 	mux.HandleFunc("POST /api/servers/{id}/start", a.action(a.dk.Start))
-	mux.HandleFunc("POST /api/servers/{id}/stop", a.action(a.dk.Stop))
+	mux.HandleFunc("POST /api/servers/{id}/stop", a.stop) // saves the world first
 	mux.HandleFunc("POST /api/servers/{id}/restart", a.action(a.dk.Restart))
 	mux.HandleFunc("DELETE /api/servers/{id}", a.remove)
 	mux.HandleFunc("GET /api/servers/{id}/logs", a.logs) // upgrades to WebSocket
+
+	// operator endpoints (spec 003)
+	mux.HandleFunc("GET /api/servers/{id}/metrics", a.metrics)
+	mux.HandleFunc("GET /api/servers/{id}/players", a.players)
+	mux.HandleFunc("POST /api/servers/{id}/broadcast", a.broadcast)
+	mux.HandleFunc("POST /api/servers/{id}/players/{uid}/kick", a.playerAction("kick"))
+	mux.HandleFunc("POST /api/servers/{id}/players/{uid}/ban", a.playerAction("ban"))
+	mux.HandleFunc("GET /api/servers/{id}/pals", a.pals) // save parsing (spec 004)
+
+	// world settings editor (spec 006)
+	mux.HandleFunc("GET /api/servers/{id}/settings", a.getSettings)
+	mux.HandleFunc("PUT /api/servers/{id}/settings", a.putSettings)
+	mux.HandleFunc("POST /api/servers/{id}/recreate", a.recreate)
+
+	// backups (spec 007)
+	mux.HandleFunc("GET /api/servers/{id}/backups", a.backups)
+	mux.HandleFunc("POST /api/servers/{id}/backups/{ts}/restore", a.restoreBackup)
+
+	// RCON console (spec 009)
+	mux.HandleFunc("POST /api/servers/{id}/rcon", a.rconExec)
 
 	mux.Handle("/", http.FileServerFS(web))
 	return mux
@@ -83,8 +103,8 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if players < 1 {
 		players = 1
-	} else if players > 32 {
-		players = 32
+	} else if players > 99 {
+		players = 99
 	}
 	difficulty := body.Difficulty
 	switch difficulty {
@@ -103,6 +123,17 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Live host port state — catches a pre-existing, unmanaged container
+	// (e.g. a manually-run Palworld server) using the pool's default ports,
+	// which Paldeck's own DB has no record of. Best-effort: if this query
+	// fails, fall back to Paldeck's own records only rather than blocking
+	// creation outright — a.dk.Create below still fails safely if a real
+	// collision slips through.
+	extraUDP, extraTCP, err := a.dk.UsedHostPorts(ctx)
+	if err != nil {
+		extraUDP, extraTCP = nil, nil
+	}
+
 	// Reserve ports + insert the record atomically FIRST (CreateReserving fills
 	// the ports). Then create the container; if that fails, drop the row. The
 	// old order (allocate → create container → insert) raced under concurrency.
@@ -117,7 +148,7 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		PvP:            body.PvP,
 		CreatedAt:      time.Now(),
 	}
-	if err := a.st.CreateReserving(&sv); err != nil {
+	if err := a.st.CreateReserving(&sv, extraUDP, extraTCP); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -127,6 +158,7 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		GamePort:       sv.GamePort,
 		QueryPort:      sv.QueryPort,
 		RconPort:       sv.RconPort,
+		RestPort:       sv.RestPort,
 		AdminPass:      sv.AdminPass,
 		Volume:         "paldeck-" + sv.ID,
 		Description:    sv.Description,

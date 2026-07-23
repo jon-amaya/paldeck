@@ -6,6 +6,7 @@ require (
 	github.com/coder/websocket v1.8.12
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
+	github.com/tetratelabs/wazero v1.12.0
 	modernc.org/sqlite v1.33.1
 )
 

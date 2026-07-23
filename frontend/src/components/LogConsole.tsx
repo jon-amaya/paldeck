@@ -18,7 +18,45 @@ const ANSI_COLORS: Record<number, string> = {
   94: '#9dbcf6', 95: '#d29df6', 96: '#7fdbe8', 97: '#eceef2',
 }
 
-type Line = { ts?: string; segs: Seg[] }
+// ── semantic highlighting (a second pass, on top of ANSI) ──────────────────
+// Real terminals only color what the *process* explicitly asks for via ANSI
+// codes — everything else prints plain. Catalyst's console (catalyst-frontend
+// /components/console/processEntry.ts) additionally highlights recognizable
+// *content* — ERROR/WARN keywords, UUIDs, IPs, URLs, embedded times — even
+// when the process never sent a color code for them. Same rule set here,
+// ported to segments instead of HTML string splicing (LogConsole never uses
+// innerHTML, so this stays XSS-safe by construction).
+const SEMANTIC_RULES: { name: string; source: string; color: string; bold?: boolean }[] = [
+  { name: 'err', source: '\\b(?:ERROR|FATAL|SEVERE|EXCEPTION|PANIC|FAILED?|FAILURE)\\b', color: 'var(--danger)', bold: true },
+  { name: 'warn', source: '\\b(?:WARN(?:ING)?|CAUTION|DEPRECATED)\\b', color: 'var(--warn)', bold: true },
+  { name: 'info', source: '\\b(?:INFO|DEBUG|TRACE|NOTICE)\\b', color: 'var(--info)' },
+  { name: 'uuid', source: '\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b', color: '#a78bfa' },
+  { name: 'time', source: '\\b\\d{4}[-/]\\d{2}[-/]\\d{2}[T ]\\d{2}:\\d{2}(?::\\d{2})?(?:\\.\\d+)?Z?\\b|\\b\\d{1,2}:\\d{2}:\\d{2}(?:\\.\\d+)?\\b', color: '#9a9cf7' },
+  { name: 'ip', source: '\\b(?:\\d{1,3}\\.){3}\\d{1,3}(?::\\d{1,5})?\\b', color: 'var(--run)' },
+  { name: 'url', source: 'https?:\\/\\/[^\\s)>\\]]+', color: 'var(--info)' },
+]
+const SEMANTIC_RE = new RegExp(SEMANTIC_RULES.map((r) => `(?<${r.name}>${r.source})`).join('|'), 'gi')
+
+function applySemantic(segs: Seg[]): Seg[] {
+  const out: Seg[] = []
+  for (const seg of segs) {
+    let last = 0
+    SEMANTIC_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = SEMANTIC_RE.exec(seg.text))) {
+      if (m.index > last) out.push({ text: seg.text.slice(last, m.index), color: seg.color, bold: seg.bold })
+      const rule = SEMANTIC_RULES.find((r) => m!.groups?.[r.name] !== undefined)!
+      out.push({ text: m[0], color: rule.color, bold: rule.bold ?? seg.bold })
+      last = SEMANTIC_RE.lastIndex
+      if (m[0] === '') SEMANTIC_RE.lastIndex++ // guard against zero-width matches
+    }
+    if (last < seg.text.length) out.push({ text: seg.text.slice(last), color: seg.color, bold: seg.bold })
+    if (seg.text === '') out.push(seg) // preserve empty segs (rare, harmless)
+  }
+  return out
+}
+
+type Line = { ts?: string; segs: Seg[]; divider?: boolean }
 
 // Docker prepends an RFC3339Nano timestamp to every line (Timestamps: true in
 // the backend) — real daemon-side emit times, valid even for the backlog.
@@ -27,12 +65,12 @@ const TS_RE = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{
 
 function parseLine(raw: string): Line {
   const m = TS_RE.exec(raw)
-  if (!m) return { segs: parseAnsi(raw) }
+  if (!m) return { segs: applySemantic(parseAnsi(raw)) }
   const d = new Date(m[1])
   const ts = isNaN(d.getTime())
     ? undefined
     : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  return { ts, segs: parseAnsi(raw.slice(m[0].length)) }
+  return { ts, segs: applySemantic(parseAnsi(raw.slice(m[0].length))) }
 }
 
 function parseAnsi(raw: string): Seg[] {
@@ -72,9 +110,25 @@ export function LogConsole({ id, name }: { id: string; name: string }) {
   useEffect(() => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws'
     const ws = new WebSocket(`${proto}://${location.host}/api/servers/${id}/logs`)
-    ws.onopen = () => setConnected(true)
+    // Docker replays a ~200-line backlog in the first moments after connect;
+    // the first line that arrives clearly later is live — divide the two so a
+    // replayed "Ending Server" can't masquerade as breaking news.
+    let openedAt = 0
+    let divided = false
+    ws.onopen = () => {
+      openedAt = Date.now()
+      setConnected(true)
+    }
     ws.onmessage = (e) =>
-      setLines((prev) => [...prev, parseLine(e.data as string)].slice(-MAX_LINES))
+      setLines((prev) => {
+        const next = [...prev]
+        if (!divided && prev.length > 0 && Date.now() - openedAt > 1200) {
+          divided = true
+          next.push({ divider: true, segs: [] })
+        }
+        next.push(parseLine(e.data as string))
+        return next.slice(-MAX_LINES)
+      })
     ws.onclose = () => setConnected(false)
     return () => ws.close()
   }, [id])
@@ -105,7 +159,12 @@ export function LogConsole({ id, name }: { id: string; name: string }) {
               : 'connecting…'}
           </div>
         ) : (
-          lines.map((ln, i) => (
+          lines.map((ln, i) =>
+            ln.divider ? (
+              <div className="term-div" key={i}>
+                <span>earlier logs</span>
+              </div>
+            ) : (
             <div className="term-ln" key={i}>
               {ln.ts && <span className="term-ts">{ln.ts}</span>}
               {ln.segs.map((g, j) => (
@@ -114,7 +173,8 @@ export function LogConsole({ id, name }: { id: string; name: string }) {
                 </span>
               ))}
             </div>
-          ))
+            ),
+          )
         )}
       </div>
     </div>

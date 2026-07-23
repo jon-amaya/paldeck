@@ -35,6 +35,71 @@ export interface CreatedServer extends Server {
   adminPassword: string
 }
 
+// GET /api/servers/{id}/metrics — every field beyond status is optional:
+// docker-derived ones need the container running; palworld-derived ones also
+// need a REST port (restAvailable) and a booted server.
+export interface ServerMetrics {
+  status: string
+  restAvailable: boolean
+  uptimeSec?: number
+  cpuPercent?: number
+  memUsed?: number
+  memLimit?: number
+  players?: number
+  maxPlayers?: number
+  fps?: number
+  day?: number
+  version?: string
+}
+
+// One entry of GET /api/servers/{id}/pals — parsed from the world save.
+export interface Pal {
+  instanceId: string
+  species: string
+  nickName: string
+  level: number
+  gender: string
+  isPlayer: boolean
+  talentHp: number
+  talentMelee: number
+  talentShot: number
+  talentDefense: number
+  passives: string[]
+  ownerUid: string
+  ownerName: string
+  exp: number
+  rank: number
+  rankHp: number
+  rankAttack: number
+  rankDefense: number
+  rankCraftSpeed: number
+  isLucky: boolean
+  friendship: number
+  movesEquipped: string[]
+  movesMastered: string[]
+}
+
+// One entry of GET /api/servers/{id}/backups — the image's own hourly
+// world snapshots (timestamp is the folder name, the backup's identity).
+export interface Backup {
+  worldId: string
+  timestamp: string // "2026.07.20-09.35.28"
+  sizeBytes: number
+  modTime: string
+}
+
+// One entry of GET /api/servers/{id}/players.
+export interface PalPlayer {
+  name: string
+  playerId: string
+  userId: string
+  ip: string
+  ping: number
+  location_x: number
+  location_y: number
+  level: number
+}
+
 // What the New Server form sends to POST /api/servers. Optional fields are
 // omitted when blank; the backend fills defaults (admin password auto-generates,
 // players → 16, difficulty → None).

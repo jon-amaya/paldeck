@@ -4,7 +4,9 @@
 > conform to this document. If something here is wrong or outdated, we change
 > *this file first*, deliberately — not in passing.
 
-Version: 1.0 · Adopted: 2026-07-17
+Version: 1.1 · Adopted: 2026-07-17 · Amended: 2026-07-23 (§4 ingress —
+dropped Caddy; NetBird's own dashboard reverse proxy + Traefik already
+covers this, see `specs/005-sharing/plan.md`)
 
 ---
 
@@ -58,7 +60,7 @@ Changing any of these requires editing this section on purpose.
 | Frontend (next) | **TypeScript + React + Vite** | Replaces the embedded vanilla-JS console. |
 | Container runtime | **Docker Engine** | NOT Docker Desktop, NOT raw containerd. Matches prod VM. |
 | Server image | **`thijsvanloef/palworld-server-docker`** | Proven image; one container per Palworld server. |
-| Sharing / ingress | **Caddy + NetBird** | Reverse proxy + private mesh for remote access. |
+| Sharing / ingress | **Self-hosted NetBird** | Private mesh for remote admin access to the panel. Reverse proxy/TLS handled via NetBird's own dashboard + Traefik integration — no separate Caddy instance. |
 
 ## 5. Architecture invariants
 
