@@ -1,0 +1,20 @@
+services:
+  paldeck:
+    build: .
+    container_name: paldeck
+    restart: unless-stopped
+    ports:
+      # loopback only — the panel has no auth of its own (single-operator
+      # tool), so it must never be reachable from the public internet.
+      # Reach it via the NetBird mesh (spec 005), not this host port directly.
+      - 127.0.0.1:8080:8080
+    volumes:
+      # Paldeck is a Docker *client* (constitution §5) — it needs the socket
+      # to create/manage the sibling Palworld containers it creates. This is
+      # root-equivalent host access, same tradeoff as Portainer/Watchtower;
+      # acceptable here because the panel itself is admin-only via NetBird.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - paldeck-data:/data
+volumes:
+  paldeck-data:
+    name: paldeck-data
