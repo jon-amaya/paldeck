@@ -286,7 +286,7 @@ func (d *Docker) ListBackups(ctx context.Context, id string) ([]Backup, error) {
 	}
 	defer rc.Close()
 	tr := tar.NewReader(rc)
-	var out []Backup
+	out := []Backup{} // not var out []Backup — nil slice marshals to JSON null
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {

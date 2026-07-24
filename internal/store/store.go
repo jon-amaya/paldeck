@@ -123,7 +123,9 @@ func (s *Store) List() ([]Server, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Server
+	// []Server{} not var out []Server — a nil slice marshals to JSON `null`,
+	// and the frontend calls .map() straight on the response with no guard.
+	out := []Server{}
 	for rows.Next() {
 		v, err := scanServer(rows)
 		if err != nil {
