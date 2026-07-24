@@ -4,10 +4,11 @@ services:
     container_name: paldeck
     restart: unless-stopped
     ports:
-      # loopback only — the panel has no auth of its own (single-operator
-      # tool), so it must never be reachable from the public internet.
-      # Reach it via the NetBird mesh (spec 005), not this host port directly.
-      - 127.0.0.1:8080:8080
+      # LAN-reachable, same as every other stack on this host (dockge,
+      # opengist, etc.) — Jon's LAN is the trust boundary here, not this
+      # one service. The panel has no login of its own, so this assumes
+      # the LAN itself is trusted; don't forward this port past the router.
+      - 8080:8080
     volumes:
       # Paldeck is a Docker *client* (constitution §5) — it needs the socket
       # to create/manage the sibling Palworld containers it creates. This is
