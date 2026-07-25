@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"paldeck/internal/docker"
@@ -25,6 +26,13 @@ func (a *api) pal(sv store.Server) *palworld.Client {
 }
 
 // GET /api/servers/{id}/metrics
+//
+// The four calls below (uptime, docker stats, palworld metrics, palworld
+// info) are entirely independent of each other — each is its own Docker API
+// or Palworld REST round-trip. Run one after another and their latencies
+// simply add up (this used to be sequential and was visibly laggy — each
+// poll paid for every call's latency in series); run concurrently and the
+// whole request takes roughly as long as the single slowest call instead.
 func (a *api) metrics(w http.ResponseWriter, r *http.Request) {
 	sv, err := a.st.Get(r.PathValue("id"))
 	if err != nil {
@@ -32,29 +40,75 @@ func (a *api) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	status := a.dk.Status(ctx, sv.ContainerID)
 	resp := map[string]any{
-		"status":        a.dk.Status(ctx, sv.ContainerID),
+		"status":        status,
 		"restAvailable": sv.RestPort > 0,
 	}
-	if resp["status"] == "running" {
-		if t, err := a.dk.StartedAt(ctx, sv.ContainerID); err == nil && !t.IsZero() {
-			resp["uptimeSec"] = int(time.Since(t).Seconds())
-		}
-		if st, err := a.dk.Stats(ctx, sv.ContainerID); err == nil {
-			resp["cpuPercent"] = st.CPUPercent
-			resp["memUsed"] = st.MemUsed
-			resp["memLimit"] = st.MemLimit
-		}
-		if pc := a.pal(sv); pc != nil {
-			if m, err := pc.Metrics(ctx); err == nil {
-				resp["players"] = m.CurrentPlayerNum
-				resp["maxPlayers"] = m.MaxPlayerNum
-				resp["fps"] = m.ServerFPS
-				resp["day"] = m.Days
+	if status == "running" {
+		var (
+			wg         sync.WaitGroup
+			uptimeSec  int
+			hasUptime  bool
+			stats      docker.StatsSnapshot
+			hasStats   bool
+			metrics    palworld.Metrics
+			hasMetrics bool
+			info       palworld.Info
+			hasInfo    bool
+		)
+		pc := a.pal(sv)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if t, err := a.dk.StartedAt(ctx, sv.ContainerID); err == nil && !t.IsZero() {
+				uptimeSec, hasUptime = int(time.Since(t).Seconds()), true
 			}
-			if inf, err := pc.Info(ctx); err == nil {
-				resp["version"] = inf.Version
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if st, err := a.dk.Stats(ctx, sv.ContainerID); err == nil {
+				stats, hasStats = st, true
 			}
+		}()
+
+		if pc != nil {
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				if m, err := pc.Metrics(ctx); err == nil {
+					metrics, hasMetrics = m, true
+				}
+			}()
+			go func() {
+				defer wg.Done()
+				if inf, err := pc.Info(ctx); err == nil {
+					info, hasInfo = inf, true
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		if hasUptime {
+			resp["uptimeSec"] = uptimeSec
+		}
+		if hasStats {
+			resp["cpuPercent"] = stats.CPUPercent
+			resp["memUsed"] = stats.MemUsed
+			resp["memLimit"] = stats.MemLimit
+		}
+		if hasMetrics {
+			resp["players"] = metrics.CurrentPlayerNum
+			resp["maxPlayers"] = metrics.MaxPlayerNum
+			resp["fps"] = metrics.ServerFPS
+			resp["day"] = metrics.Days
+		}
+		if hasInfo {
+			resp["version"] = info.Version
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
