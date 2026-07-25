@@ -112,4 +112,5 @@ export interface CreateServerInput {
   difficulty?: string
   pvp?: boolean
   worldSettings?: Record<string, string>
+  gamePort?: number // 0/omitted = auto-assign from the pool; set to pin an exact port
 }

@@ -6,6 +6,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -152,7 +153,14 @@ func (s *Store) Get(id string) (Server, error) {
 // (8211/27015/8212/25575) would otherwise get silently reused, and the
 // container create would fail. Split by protocol because tcp/udp are
 // independent kernel port namespaces — see the REST-port comment below.
-func (s *Store) CreateReserving(v *Server, extraUDP, extraTCP map[int]bool) error {
+//
+// requestedGame, if non-zero, pins the game port instead of auto-assigning
+// from the pool — for an operator who wants a specific, predictable port to
+// pre-configure a router forward against (mirrors their other stacks, which
+// aren't Paldeck-managed and use whatever port they were hand-assigned). A
+// collision on a requested port is a hard error, not silently reassigned —
+// reassigning would defeat the entire point of asking for a specific port.
+func (s *Store) CreateReserving(v *Server, requestedGame int, extraUDP, extraTCP map[int]bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -182,15 +190,26 @@ func (s *Store) CreateReserving(v *Server, extraUDP, extraTCP map[int]bool) erro
 		return err
 	}
 
-	game := 8211
-	for {
+	collides := func(game int) bool {
 		offset := game - 8211
 		query, rcon, rest := 27015+offset, 25575+offset, 8212+offset
-		if usedGame[game] || extraUDP[game] || extraUDP[query] || extraTCP[rcon] || extraTCP[rest] {
-			game++
-			continue
+		return usedGame[game] || extraUDP[game] || extraUDP[query] || extraTCP[rcon] || extraTCP[rest]
+	}
+
+	var game int
+	if requestedGame != 0 {
+		if requestedGame < 1024 || requestedGame > 65535 {
+			return fmt.Errorf("game port must be between 1024 and 65535")
 		}
-		break
+		if collides(requestedGame) {
+			return fmt.Errorf("port %d (or one of its derived query/rcon/rest ports) is already in use", requestedGame)
+		}
+		game = requestedGame
+	} else {
+		game = 8211
+		for collides(game) {
+			game++
+		}
 	}
 	offset := game - 8211
 	v.GamePort, v.QueryPort, v.RconPort = game, 27015+offset, 25575+offset

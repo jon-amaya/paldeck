@@ -39,6 +39,7 @@ export function NewServerModal({
   const [multithreading, setMultithreading] = useState(true)
   const [community, setCommunity] = useState(false)
   const [publicIp, setPublicIp] = useState('')
+  const [gamePort, setGamePort] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -65,6 +66,7 @@ export function NewServerModal({
         difficulty,
         pvp,
         worldSettings,
+        gamePort: gamePort.trim() ? Number(gamePort) : undefined,
       })
       onClose()
     } catch (e) {
@@ -162,16 +164,36 @@ export function NewServerModal({
               <span className="formcard-ic"><IcGlobe /></span>
               <b>Network</b>
             </div>
-            <label className="field">
-              <span>
-                Timezone <em>optional</em>
-              </span>
-              <input
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="e.g. America/Chicago — blank uses the image default"
-              />
-            </label>
+            <div className="field-row">
+              <label className="field">
+                <span>
+                  Game port <em>optional</em>
+                </span>
+                <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={gamePort}
+                  onChange={(e) => setGamePort(e.target.value)}
+                  placeholder="auto-assigned"
+                />
+              </label>
+              <label className="field">
+                <span>
+                  Timezone <em>optional</em>
+                </span>
+                <input
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  placeholder="e.g. America/Chicago"
+                />
+              </label>
+            </div>
+            <p className="note" style={{ margin: '6px 0 0' }}>
+              Leave the port blank to auto-assign from the pool — pin one if you want a
+              predictable port to forward on your router ahead of time. Query/RCON/REST
+              ports follow the same offset either way.
+            </p>
             <label className="field" style={{ marginTop: 12 }}>
               <span>
                 Public IP <em>optional</em>

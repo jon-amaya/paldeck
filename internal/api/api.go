@@ -86,6 +86,7 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		Difficulty     string            `json:"difficulty"`
 		PvP            bool              `json:"pvp"`
 		WorldSettings  map[string]string `json:"worldSettings"` // TZ, MULTITHREADING, COMMUNITY, PUBLIC_IP — see allowedEnv
+		GamePort       int               `json:"gamePort"`      // 0 = auto-assign from the pool; non-zero pins it
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -155,8 +156,12 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		WorldSettings:  world,
 		CreatedAt:      time.Now(),
 	}
-	if err := a.st.CreateReserving(&sv, extraUDP, extraTCP); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if err := a.st.CreateReserving(&sv, body.GamePort, extraUDP, extraTCP); err != nil {
+		status := http.StatusInternalServerError
+		if body.GamePort != 0 {
+			status = http.StatusConflict // a requested port was invalid or taken — a client error, not a server fault
+		}
+		writeErr(w, status, err.Error())
 		return
 	}
 
