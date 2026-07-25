@@ -182,6 +182,7 @@ export function ServerDetail({
           </div>
           <div className="tile"><small>Game port</small><b className="mono">:{s.gamePort}</b></div>
           <div className="tile"><small>Query / RCON</small><b className="mono">:{s.queryPort} · :{s.rconPort}</b></div>
+          <div className="tile"><small>REST API</small><b className="mono">:{s.restPort}</b></div>
           <div className="tile"><small>Created</small><b>{new Date(s.createdAt).toLocaleDateString()}</b></div>
         </div>
         {m && !m.restAvailable && (

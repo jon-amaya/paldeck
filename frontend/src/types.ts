@@ -8,6 +8,7 @@ export interface Server {
   gamePort: number
   queryPort: number
   rconPort: number
+  restPort: number
   description: string
   maxPlayers: number
   difficulty: string

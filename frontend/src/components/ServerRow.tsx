@@ -91,6 +91,7 @@ export function ServerCard({
           <span className="port-pill">:{s.gamePort}/udp</span>
           <span className="port-pill">query :{s.queryPort}</span>
           <span className="port-pill">rcon :{s.rconPort}</span>
+          <span className="port-pill">rest :{s.restPort}</span>
         </div>
         {metrics?.version && <span className="mono mut" style={{ fontSize: 11 }}>{metrics.version}</span>}
       </div>
