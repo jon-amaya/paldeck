@@ -56,6 +56,10 @@ func New(st *store.Store, dk *docker.Docker, web fs.FS) http.Handler {
 	// RCON console (spec 009)
 	mux.HandleFunc("POST /api/servers/{id}/rcon", a.rconExec)
 
+	// import an existing unmanaged server's save into a new one
+	mux.HandleFunc("GET /api/import-candidates", a.importCandidates)
+	mux.HandleFunc("POST /api/servers/{id}/import-save", a.importSave)
+
 	mux.Handle("/", http.FileServerFS(web))
 	return mux
 }

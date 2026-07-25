@@ -89,6 +89,15 @@ export interface Backup {
   modTime: string
 }
 
+// One entry of GET /api/import-candidates — an existing, unmanaged Palworld
+// container whose world can be imported into a new Paldeck-created server.
+export interface ImportCandidate {
+  containerId: string
+  name: string
+  serverName: string
+  running: boolean
+}
+
 // One entry of GET /api/servers/{id}/players.
 export interface PalPlayer {
   name: string

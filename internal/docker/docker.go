@@ -380,6 +380,125 @@ func (d *Docker) RestoreBackup(ctx context.Context, id, worldID, timestamp strin
 	return d.cli.CopyToContainer(ctx, id, dst, &buf, container.CopyToContainerOptions{})
 }
 
+// ImportSave copies srcID's live world (all files under SaveGames/0, minus
+// its own nested backups — same exclusion ReadWorldLevelSav uses) into dstID
+// so dstID picks it up as its own world on first boot. Meant to run against
+// a freshly created, not-yet-started server — never touches srcID (read-only
+// CopyFromContainer), so the source (typically an unmanaged, hand-run server
+// Paldeck doesn't otherwise touch) is completely unaffected either way.
+//
+// Copies to /palworld, not .../SaveGames/0 directly: a container that's
+// never been started has an empty volume — none of Pal/, Pal/Saved/, or
+// Pal/Saved/SaveGames/ exist yet (Palworld itself creates that tree on
+// first run), and CopyToContainer requires its destination to already
+// exist. /palworld is the volume mount point, so it's always there.
+// CopyFromContainer's tar is rooted at the basename of the path requested
+// ("0/…", confirmed by RestoreBackup's own prefix-stripping below) — each
+// entry is rewritten onto the full Pal/Saved/SaveGames/0/… path, with
+// explicit synthetic directory headers for every intermediate level so
+// extraction doesn't depend on Docker auto-creating missing parents.
+func (d *Docker) ImportSave(ctx context.Context, srcID, dstID string) error {
+	rc, _, err := d.cli.CopyFromContainer(ctx, srcID, "/palworld/Pal/Saved/SaveGames/0")
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	now := time.Now()
+	for _, dir := range []string{"Pal", "Pal/Saved", "Pal/Saved/SaveGames", "Pal/Saved/SaveGames/0"} {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: dir + "/", Typeflag: tar.TypeDir, Mode: 0755, ModTime: now,
+		}); err != nil {
+			return err
+		}
+	}
+	tr := tar.NewReader(rc)
+	wrote := false
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if strings.Contains(hdr.Name, "/backup/") {
+			continue // historical snapshots, not part of the live world
+		}
+		hdr.Name = "Pal/Saved/SaveGames/0/" + strings.TrimPrefix(hdr.Name, "0/")
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			if _, err := io.Copy(tw, tr); err != nil {
+				return err
+			}
+		}
+		wrote = true
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if !wrote {
+		return fmt.Errorf("source has no world save to import")
+	}
+	return d.cli.CopyToContainer(ctx, dstID, "/palworld", &buf, container.CopyToContainerOptions{})
+}
+
+// ImportCandidate is an existing Palworld container Paldeck didn't create —
+// a source for ImportSave.
+type ImportCandidate struct {
+	ContainerID string `json:"containerId"`
+	Name        string `json:"name"` // container name, minus Docker's leading "/"
+	ServerName  string `json:"serverName"` // SERVER_NAME env, if present — friendlier than the container name
+	Running     bool   `json:"running"`
+}
+
+// ImportCandidates lists every container running the Palworld image that
+// Paldeck didn't create (no paldeck.managed label) — the pool ImportSave's
+// srcID can come from. One ContainerInspect per candidate (env vars aren't
+// in the ContainerList summary) — fine, this is an occasional UI action,
+// not a hot path.
+func (d *Docker) ImportCandidates(ctx context.Context) ([]ImportCandidate, error) {
+	list, err := d.cli.ContainerList(ctx, container.ListOptions{All: true})
+	if err != nil {
+		return nil, err
+	}
+	out := []ImportCandidate{}
+	for _, c := range list {
+		// c.Image can be an image ID instead of a repo:tag in some Docker
+		// states, so match loosely on the repo name rather than requiring
+		// an exact string match against the full pinned Image constant.
+		if !strings.Contains(c.Image, "palworld-server-docker") {
+			continue
+		}
+		if c.Labels["paldeck.managed"] == "true" {
+			continue
+		}
+		name := strings.TrimPrefix(firstOrEmpty(c.Names), "/")
+		cand := ImportCandidate{ContainerID: c.ID, Name: name, Running: c.State == "running"}
+		if info, err := d.cli.ContainerInspect(ctx, c.ID); err == nil {
+			for _, e := range info.Config.Env {
+				if v, ok := strings.CutPrefix(e, "SERVER_NAME="); ok {
+					cand.ServerName = v
+					break
+				}
+			}
+		}
+		out = append(out, cand)
+	}
+	return out, nil
+}
+
+func firstOrEmpty(s []string) string {
+	if len(s) == 0 {
+		return ""
+	}
+	return s[0]
+}
+
 // isSafeSegment guards against path traversal in values that came from a URL
 // path segment before we splice them into a container path.
 func isSafeSegment(s string) bool {

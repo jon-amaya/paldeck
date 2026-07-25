@@ -10,6 +10,7 @@ import type {
   PalPlayer,
   Pal,
   Backup,
+  ImportCandidate,
 } from './types'
 
 async function unwrap<T>(r: Response): Promise<T> {
@@ -116,4 +117,16 @@ export const api = {
     fetch(`/api/servers/${id}/players/${uid}/${kind}`, { method: 'POST' }).then(
       (r) => unwrap<{ status: string }>(r),
     ),
+
+  importCandidates: () =>
+    fetch('/api/import-candidates').then((r) =>
+      unwrap<{ candidates: ImportCandidate[] }>(r),
+    ),
+
+  importSave: (id: string, sourceContainerId: string) =>
+    fetch(`/api/servers/${id}/import-save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceContainerId }),
+    }).then((r) => unwrap<{ status: string }>(r)),
 }

@@ -1,6 +1,7 @@
-import { useState } from 'react'
-import type { CreateServerInput } from '../types'
+import { useEffect, useState } from 'react'
+import type { CreatedServer, CreateServerInput, ImportCandidate } from '../types'
 import { Toggle } from './Toggle'
+import { api } from '../api'
 
 const DIFFICULTIES = ['None', 'Normal', 'Difficult'] as const
 
@@ -17,16 +18,23 @@ const IcLock = () => (
 const IcGlobe = () => (
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.5 4 6 4 9s-1.5 6.5-4 9c-2.5-2.5-4-6-4-9s1.5-6.5 4-9z" /></svg>
 )
+const IcDownload = () => (
+  <svg viewBox="0 0 24 24"><path d="M12 3v13M7 11l5 5 5-5M4 20h16" /></svg>
+)
 
 // The real create flow: a modal that collects Palworld settings (not just a
 // name). Ports stay auto-assigned by the backend. Admin password auto-generates
 // when left blank. onCreate throws on failure so we can show the error inline.
+// onCreate resolves with the created server so an import can be chained onto
+// it before its first start — importing a save is a separate call
+// (POST .../import-save), not a create-time field, since it operates on the
+// container Docker just made, not the create request itself.
 export function NewServerModal({
   onClose,
   onCreate,
 }: {
   onClose: () => void
-  onCreate: (input: CreateServerInput) => Promise<void>
+  onCreate: (input: CreateServerInput) => Promise<CreatedServer>
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -43,8 +51,14 @@ export function NewServerModal({
   const [queryPort, setQueryPort] = useState('')
   const [rconPort, setRconPort] = useState('')
   const [restApiPort, setRestApiPort] = useState('')
+  const [importFrom, setImportFrom] = useState('') // containerId, '' = fresh world
+  const [candidates, setCandidates] = useState<ImportCandidate[]>([])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    api.importCandidates().then((r) => setCandidates(r.candidates)).catch(() => {})
+  }, [])
 
   const submit = async () => {
     if (!name.trim()) {
@@ -60,7 +74,7 @@ export function NewServerModal({
       }
       if (timezone.trim()) worldSettings.TZ = timezone.trim()
       if (publicIp.trim()) worldSettings.PUBLIC_IP = publicIp.trim()
-      await onCreate({
+      const created = await onCreate({
         name: name.trim(),
         description: description.trim() || undefined,
         maxPlayers,
@@ -74,6 +88,18 @@ export function NewServerModal({
         rconPort: rconPort.trim() ? Number(rconPort) : undefined,
         restApiPort: restApiPort.trim() ? Number(restApiPort) : undefined,
       })
+      if (importFrom) {
+        // Server was created successfully — from here on, failure means "you
+        // have a fresh empty-world server, the import just didn't take,"
+        // never data loss (import-save only ever reads the source).
+        try {
+          await api.importSave(created.id, importFrom)
+        } catch (e) {
+          setErr(`Server created, but the save import failed: ${(e as Error).message}`)
+          setBusy(false)
+          return
+        }
+      }
       onClose()
     } catch (e) {
       setErr((e as Error).message)
@@ -126,6 +152,33 @@ export function NewServerModal({
               />
             </label>
           </div>
+
+          {candidates.length > 0 && (
+            <div className="formcard">
+              <div className="formcard-head">
+                <span className="formcard-ic"><IcDownload /></span>
+                <b>Import</b>
+              </div>
+              <label className="field">
+                <span>
+                  Bring in a world from <em>optional</em>
+                </span>
+                <select value={importFrom} onChange={(e) => setImportFrom(e.target.value)}>
+                  <option value="">Fresh world — don't import anything</option>
+                  {candidates.map((c) => (
+                    <option key={c.containerId} value={c.containerId}>
+                      {c.serverName || c.name} ({c.name}){c.running ? '' : ' — stopped'}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p className="note" style={{ margin: '6px 0 0' }}>
+                Copies that server's current world into this new one — the source is
+                never modified or touched. This server will start with that world
+                already loaded.
+              </p>
+            </div>
+          )}
 
           <div className="formcard">
             <div className="formcard-head">

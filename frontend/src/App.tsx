@@ -79,11 +79,13 @@ export default function App() {
     return () => clearInterval(t)
   }, [refresh])
 
-  // Throws on failure so the modal can show the error and stay open.
+  // Throws on failure so the modal can show the error and stay open. Returns
+  // the created server so the modal can chain an import-save call onto it.
   const createServer = async (input: CreateServerInput) => {
     const res = await api.create(input)
     setCreated(res)
     await refresh()
+    return res
   }
 
   const action = async (id: string, a: LifecycleAction) => {
