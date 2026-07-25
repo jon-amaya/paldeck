@@ -14,6 +14,9 @@ const IcSliders = () => (
 const IcLock = () => (
   <svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
 )
+const IcGlobe = () => (
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.5 4 6 4 9s-1.5 6.5-4 9c-2.5-2.5-4-6-4-9s1.5-6.5 4-9z" /></svg>
+)
 
 // The real create flow: a modal that collects Palworld settings (not just a
 // name). Ports stay auto-assigned by the backend. Admin password auto-generates
@@ -32,6 +35,10 @@ export function NewServerModal({
   const [adminPassword, setAdminPassword] = useState('')
   const [difficulty, setDifficulty] = useState<string>('None')
   const [pvp, setPvp] = useState(false)
+  const [timezone, setTimezone] = useState('')
+  const [multithreading, setMultithreading] = useState(true)
+  const [community, setCommunity] = useState(false)
+  const [publicIp, setPublicIp] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -43,6 +50,12 @@ export function NewServerModal({
     setBusy(true)
     setErr(null)
     try {
+      const worldSettings: Record<string, string> = {
+        MULTITHREADING: multithreading ? 'True' : 'False',
+        COMMUNITY: community ? 'True' : 'False',
+      }
+      if (timezone.trim()) worldSettings.TZ = timezone.trim()
+      if (publicIp.trim()) worldSettings.PUBLIC_IP = publicIp.trim()
       await onCreate({
         name: name.trim(),
         description: description.trim() || undefined,
@@ -51,6 +64,7 @@ export function NewServerModal({
         adminPassword: adminPassword.trim() || undefined,
         difficulty,
         pvp,
+        worldSettings,
       })
       onClose()
     } catch (e) {
@@ -139,6 +153,51 @@ export function NewServerModal({
               </div>
               <div className="opt-ctl">
                 <Toggle checked={pvp} onChange={setPvp} />
+              </div>
+            </div>
+          </div>
+
+          <div className="formcard">
+            <div className="formcard-head">
+              <span className="formcard-ic"><IcGlobe /></span>
+              <b>Network</b>
+            </div>
+            <label className="field">
+              <span>
+                Timezone <em>optional</em>
+              </span>
+              <input
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                placeholder="e.g. America/Chicago — blank uses the image default"
+              />
+            </label>
+            <label className="field" style={{ marginTop: 12 }}>
+              <span>
+                Public IP <em>optional</em>
+              </span>
+              <input
+                value={publicIp}
+                onChange={(e) => setPublicIp(e.target.value)}
+                placeholder="Only needed if this server is reachable from the internet"
+              />
+            </label>
+            <div className="opt-row" style={{ borderBottom: 0, padding: '12px 0 0' }}>
+              <div className="opt-info">
+                <p className="opt-name">Multithreading</p>
+                <p className="opt-key">Better performance on multi-core hosts</p>
+              </div>
+              <div className="opt-ctl">
+                <Toggle checked={multithreading} onChange={setMultithreading} />
+              </div>
+            </div>
+            <div className="opt-row" style={{ borderBottom: 0, padding: '10px 0 0' }}>
+              <div className="opt-info">
+                <p className="opt-name">Public server browser</p>
+                <p className="opt-key">List this server in Palworld's in-game community list</p>
+              </div>
+              <div className="opt-ctl">
+                <Toggle checked={community} onChange={setCommunity} />
               </div>
             </div>
           </div>

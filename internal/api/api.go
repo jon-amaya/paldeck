@@ -78,16 +78,22 @@ func (a *api) list(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name           string `json:"name"`
-		Description    string `json:"description"`
-		MaxPlayers     int    `json:"maxPlayers"`
-		ServerPassword string `json:"serverPassword"`
-		AdminPassword  string `json:"adminPassword"`
-		Difficulty     string `json:"difficulty"`
-		PvP            bool   `json:"pvp"`
+		Name           string            `json:"name"`
+		Description    string            `json:"description"`
+		MaxPlayers     int               `json:"maxPlayers"`
+		ServerPassword string            `json:"serverPassword"`
+		AdminPassword  string            `json:"adminPassword"`
+		Difficulty     string            `json:"difficulty"`
+		PvP            bool              `json:"pvp"`
+		WorldSettings  map[string]string `json:"worldSettings"` // TZ, MULTITHREADING, COMMUNITY, PUBLIC_IP — see allowedEnv
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	world, err := sanitizeWorldSettings(body.WorldSettings)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	name := sanitizeName(body.Name)
@@ -146,6 +152,7 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		ServerPassword: strings.TrimSpace(body.ServerPassword),
 		Difficulty:     difficulty,
 		PvP:            body.PvP,
+		WorldSettings:  world,
 		CreatedAt:      time.Now(),
 	}
 	if err := a.st.CreateReserving(&sv, extraUDP, extraTCP); err != nil {
@@ -166,6 +173,7 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		ServerPassword: sv.ServerPassword,
 		Difficulty:     sv.Difficulty,
 		PvP:            sv.PvP,
+		Extra:          sv.WorldSettings,
 	})
 	if err != nil {
 		_ = a.st.Delete(sv.ID) // release the reservation

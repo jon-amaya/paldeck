@@ -111,4 +111,5 @@ export interface CreateServerInput {
   adminPassword?: string
   difficulty?: string
   pvp?: boolean
+  worldSettings?: Record<string, string>
 }

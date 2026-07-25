@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -37,6 +38,33 @@ var allowedEnv = map[string]bool{
 	"AUTO_RESET_GUILD_TIME_NO_ONLINE_PLAYERS": true,
 	"CAN_PICKUP_OTHER_GUILD_DEATH_PENALTY_DROP": true,
 	"ENABLE_NON_LOGIN_PENALTY": true,
+	// Network/server — not a world-balance rate, but the same env-var
+	// passthrough mechanism (create-time and later editable). PUBLIC_PORT is
+	// deliberately not user-settable here: docker.go derives it from the
+	// server's own GamePort automatically when PUBLIC_IP is set, so it can't
+	// drift out of sync the way manually-paired env vars can.
+	"TZ": true, "MULTITHREADING": true, "COMMUNITY": true, "PUBLIC_IP": true,
+}
+
+// sanitizeWorldSettings validates+cleans a raw settings map against
+// allowedEnv — shared by the create handler and putSettings so the two
+// entry points can't drift on what's accepted.
+func sanitizeWorldSettings(raw map[string]string) (map[string]string, error) {
+	clean := map[string]string{}
+	for k, v := range raw {
+		k = strings.ToUpper(strings.TrimSpace(k))
+		v = strings.TrimSpace(v)
+		if !allowedEnv[k] {
+			return nil, fmt.Errorf("unknown setting: %s", k)
+		}
+		if len(v) > 64 {
+			return nil, fmt.Errorf("value too long for %s", k)
+		}
+		if v != "" {
+			clean[k] = v
+		}
+	}
+	return clean, nil
 }
 
 // GET /api/servers/{id}/settings
@@ -100,21 +128,10 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 		sv.PvP = *body.PvP
 	}
 	if body.World != nil {
-		clean := map[string]string{}
-		for k, v := range body.World {
-			k = strings.ToUpper(strings.TrimSpace(k))
-			v = strings.TrimSpace(v)
-			if !allowedEnv[k] {
-				writeErr(w, http.StatusBadRequest, "unknown setting: "+k)
-				return
-			}
-			if len(v) > 64 {
-				writeErr(w, http.StatusBadRequest, "value too long for "+k)
-				return
-			}
-			if v != "" {
-				clean[k] = v
-			}
+		clean, err := sanitizeWorldSettings(body.World)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
 		}
 		sv.WorldSettings = clean
 	}

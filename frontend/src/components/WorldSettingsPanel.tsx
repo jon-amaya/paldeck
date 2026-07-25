@@ -17,7 +17,7 @@ const IcGear = () => (
 // their shared options schema (packages/shared/src/options.ts) for the same
 // underlying PalWorldSettings.ini keys — not guessed.
 
-type Kind = 'num' | 'bool' | 'select'
+type Kind = 'num' | 'bool' | 'select' | 'text'
 interface Opt {
   env: string
   label: string
@@ -106,6 +106,15 @@ const CATS: Cat[] = [
       { env: 'EXIST_PLAYER_AFTER_LOGOUT', label: 'Body stays after logout', kind: 'bool', def: 'False' },
     ],
   },
+  {
+    name: 'Network',
+    opts: [
+      { env: 'TZ', label: 'Timezone', kind: 'text', def: '(image default)', hint: 'e.g. America/Chicago' },
+      { env: 'MULTITHREADING', label: 'Multithreading', kind: 'bool', def: 'False', hint: 'Better performance on multi-core hosts' },
+      { env: 'COMMUNITY', label: 'Public server browser', kind: 'bool', def: 'False', hint: "List this server in Palworld's in-game community list" },
+      { env: 'PUBLIC_IP', label: 'Public IP', kind: 'text', def: '(none)', hint: 'Only needed if this server is reachable from the internet — the public port always matches the game port' },
+    ],
+  },
 ]
 
 function OptRow({ o, value, onChange }: { o: Opt; value: string; onChange: (v: string) => void }) {
@@ -127,6 +136,13 @@ function OptRow({ o, value, onChange }: { o: Opt; value: string; onChange: (v: s
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
+        ) : o.kind === 'text' ? (
+          <input
+            className="opt-text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={o.def}
+          />
         ) : (
           <>
             {o.min !== undefined && o.max !== undefined && (

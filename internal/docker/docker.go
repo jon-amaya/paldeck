@@ -113,10 +113,18 @@ func (d *Docker) Create(ctx context.Context, o CreateOpts) (string, error) {
 			"REST_API_PORT=8212",
 			"ADMIN_PASSWORD=" + o.AdminPass,
 			"UPDATE_ON_BOOT=true",
+			"BACKUP_ENABLED=true",
+			"CROSSPLAY_PLATFORMS=(Steam,Xbox,PS5,Mac)",
 		},
 	}
 	for k, v := range o.Extra {
 		cfg.Env = append(cfg.Env, k+"="+v)
+	}
+	// PUBLIC_PORT isn't independently user-settable (see allowedEnv) — when
+	// PUBLIC_IP is set, derive it from this server's own game port so the
+	// two can't drift out of sync the way manually-paired env vars can.
+	if o.Extra["PUBLIC_IP"] != "" {
+		cfg.Env = append(cfg.Env, fmt.Sprintf("PUBLIC_PORT=%d", o.GamePort))
 	}
 	host := &container.HostConfig{
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
