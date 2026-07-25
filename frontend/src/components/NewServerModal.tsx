@@ -40,6 +40,8 @@ export function NewServerModal({
   const [community, setCommunity] = useState(false)
   const [publicIp, setPublicIp] = useState('')
   const [gamePort, setGamePort] = useState('')
+  const [queryPort, setQueryPort] = useState('')
+  const [restApiPort, setRestApiPort] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -67,6 +69,8 @@ export function NewServerModal({
         pvp,
         worldSettings,
         gamePort: gamePort.trim() ? Number(gamePort) : undefined,
+        queryPort: queryPort.trim() ? Number(queryPort) : undefined,
+        restApiPort: restApiPort.trim() ? Number(restApiPort) : undefined,
       })
       onClose()
     } catch (e) {
@@ -175,25 +179,51 @@ export function NewServerModal({
                   max={65535}
                   value={gamePort}
                   onChange={(e) => setGamePort(e.target.value)}
-                  placeholder="auto-assigned"
+                  placeholder="auto"
                 />
               </label>
               <label className="field">
                 <span>
-                  Timezone <em>optional</em>
+                  Query port <em>optional</em>
                 </span>
                 <input
-                  value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
-                  placeholder="e.g. America/Chicago"
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={queryPort}
+                  onChange={(e) => setQueryPort(e.target.value)}
+                  placeholder="auto"
+                />
+              </label>
+              <label className="field">
+                <span>
+                  REST API port <em>optional</em>
+                </span>
+                <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={restApiPort}
+                  onChange={(e) => setRestApiPort(e.target.value)}
+                  placeholder="auto"
                 />
               </label>
             </div>
             <p className="note" style={{ margin: '6px 0 0' }}>
-              Leave the port blank to auto-assign from the pool — pin one if you want a
-              predictable port to forward on your router ahead of time. Query/RCON/REST
-              ports follow the same offset either way.
+              Each port is independent — leave any blank to auto-assign it, or pin
+              specific ones to forward on your router ahead of time. RCON always follows
+              the game port automatically (it's loopback-only, never forwarded).
             </p>
+            <label className="field" style={{ marginTop: 12 }}>
+              <span>
+                Timezone <em>optional</em>
+              </span>
+              <input
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                placeholder="e.g. America/Chicago"
+              />
+            </label>
             <label className="field" style={{ marginTop: 12 }}>
               <span>
                 Public IP <em>optional</em>

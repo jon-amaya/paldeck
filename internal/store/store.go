@@ -141,7 +141,7 @@ func (s *Store) Get(id string) (Server, error) {
 	return scanServer(s.db.QueryRow(`SELECT `+cols+` FROM servers WHERE id = ?`, id))
 }
 
-// CreateReserving allocates a free port triple and inserts the record in ONE
+// CreateReserving allocates a free port set and inserts the record in ONE
 // transaction, then writes the chosen ports back into v. The old flow (read
 // used ports → … → insert later) let two concurrent creates claim the same
 // ports; the stress test proved it (two servers on 8217). Atomic = no window.
@@ -149,73 +149,100 @@ func (s *Store) Get(id string) (Server, error) {
 // extraUDP/extraTCP additionally exclude ports already bound by containers
 // Paldeck doesn't manage (see docker.UsedHostPorts) — Paldeck's own SELECT
 // below only knows about servers it created itself, so a pre-existing
-// unmanaged deployment on the same host using the same default ports
-// (8211/27015/8212/25575) would otherwise get silently reused, and the
-// container create would fail. Split by protocol because tcp/udp are
-// independent kernel port namespaces — see the REST-port comment below.
+// unmanaged deployment on the same host using the same default ports would
+// otherwise get silently reused, and the container create would fail. Split
+// by protocol because tcp/udp are independent kernel port namespaces — see
+// the REST-port comment below.
 //
-// requestedGame, if non-zero, pins the game port instead of auto-assigning
-// from the pool — for an operator who wants a specific, predictable port to
-// pre-configure a router forward against (mirrors their other stacks, which
-// aren't Paldeck-managed and use whatever port they were hand-assigned). A
-// collision on a requested port is a hard error, not silently reassigned —
-// reassigning would defeat the entire point of asking for a specific port.
-func (s *Store) CreateReserving(v *Server, requestedGame int, extraUDP, extraTCP map[int]bool) error {
+// reqGame/reqQuery/reqRest, each independently optional (0 = auto), pin
+// specific ports instead of deriving everything from one shared offset —
+// real operator port layouts don't stay in lockstep (verified against Jon's
+// own hand-run stacks: server 1 is game 8211/query 27015/rest 8212, but
+// server 2 is game 8213/query 27016/rest 8214 — query is +1 while game and
+// rest are +2, three independently-chosen numbers, not one offset applied
+// three times). RCON stays derived from the game port's own offset — it's
+// loopback-only and never appears in any of Jon's compose files, so there's
+// no real-world convention to match by making it independently settable
+// too. A collision on any *requested* port is a hard error, not silently
+// reassigned — reassigning would defeat the point of asking for a specific
+// port.
+func (s *Store) CreateReserving(v *Server, reqGame, reqQuery, reqRest int, extraUDP, extraTCP map[int]bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
-	// Every Paldeck-created server's game/query/rcon/rest ports share one
-	// offset (see below), so checking game-port uniqueness among Paldeck's
-	// own rows is sufficient to guarantee the derived ports are unique too
-	// — that part doesn't need extraUDP/extraTCP, only the game port itself
-	// (udp) does, plus the three derived ports against the live host state.
-	rows, err := tx.Query(`SELECT game_port FROM servers`)
+	// Ports can now be requested independently, so uniqueness among Paldeck's
+	// own rows must be checked per-column, not inferred from game-port
+	// uniqueness alone (that inference only held while every port derived
+	// from one shared offset).
+	rows, err := tx.Query(`SELECT game_port, query_port, rcon_port, rest_port FROM servers`)
 	if err != nil {
 		return err
 	}
-	usedGame := map[int]bool{}
+	usedGame, usedQuery, usedRcon, usedRest := map[int]bool{}, map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for rows.Next() {
-		var p int
-		if err := rows.Scan(&p); err != nil {
+		var g, q, rc, rs int
+		if err := rows.Scan(&g, &q, &rc, &rs); err != nil {
 			rows.Close()
 			return err
 		}
-		usedGame[p] = true
+		usedGame[g], usedQuery[q], usedRcon[rc], usedRest[rs] = true, true, true, true
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
-	collides := func(game int) bool {
-		offset := game - 8211
-		query, rcon, rest := 27015+offset, 25575+offset, 8212+offset
-		return usedGame[game] || extraUDP[game] || extraUDP[query] || extraTCP[rcon] || extraTCP[rest]
+	udpUsed := func(p int) bool { return usedGame[p] || usedQuery[p] || extraUDP[p] }
+	tcpUsed := func(p int) bool { return usedRcon[p] || usedRest[p] || extraTCP[p] }
+
+	// The auto-assign baseline: only searched when game isn't pinned, using
+	// the original lockstep check (all four positions at once) so the fully-
+	// automatic path — the common case — behaves exactly as it always has.
+	base := 0
+	if reqGame == 0 {
+		for udpUsed(8211+base) || udpUsed(27015+base) || tcpUsed(25575+base) || tcpUsed(8212+base) {
+			base++
+		}
 	}
 
-	var game int
-	if requestedGame != 0 {
-		if requestedGame < 1024 || requestedGame > 65535 {
-			return fmt.Errorf("game port must be between 1024 and 65535")
+	resolve := func(requested, auto int, used func(int) bool, label string) (int, error) {
+		if requested == 0 {
+			return auto, nil
 		}
-		if collides(requestedGame) {
-			return fmt.Errorf("port %d (or one of its derived query/rcon/rest ports) is already in use", requestedGame)
+		if requested < 1024 || requested > 65535 {
+			return 0, fmt.Errorf("%s port must be between 1024 and 65535", label)
 		}
-		game = requestedGame
-	} else {
-		game = 8211
-		for collides(game) {
-			game++
+		if used(requested) {
+			return 0, fmt.Errorf("%s port %d is already in use", label, requested)
 		}
+		return requested, nil
 	}
-	offset := game - 8211
-	v.GamePort, v.QueryPort, v.RconPort = game, 27015+offset, 25575+offset
-	// REST API: 8212+offset on 127.0.0.1/tcp. Can share a number with a
-	// neighbor's game port (udp, all interfaces) — different protocol+bind.
-	v.RestPort = 8212 + offset
+
+	game, err := resolve(reqGame, 8211+base, udpUsed, "game")
+	if err != nil {
+		return err
+	}
+	query, err := resolve(reqQuery, 27015+base, udpUsed, "query")
+	if err != nil {
+		return err
+	}
+	rest, err := resolve(reqRest, 8212+base, tcpUsed, "REST API")
+	if err != nil {
+		return err
+	}
+	// RCON always derives from the final game port's own offset (not
+	// independently requestable — see the doc comment above) and just
+	// increments past a collision, since nothing external depends on its
+	// exact value the way router forwards depend on game/query/rest.
+	rcon := 25575 + (game - 8211)
+	for tcpUsed(rcon) {
+		rcon++
+	}
+
+	v.GamePort, v.QueryPort, v.RconPort, v.RestPort = game, query, rcon, rest
 
 	pvp := 0
 	if v.PvP {
