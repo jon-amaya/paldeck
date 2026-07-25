@@ -88,7 +88,8 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		WorldSettings  map[string]string `json:"worldSettings"` // TZ, MULTITHREADING, COMMUNITY, PUBLIC_IP — see allowedEnv
 		GamePort       int               `json:"gamePort"`      // each 0 = auto-assign from the pool;
 		QueryPort      int               `json:"queryPort"`     // non-zero independently pins that port
-		RestApiPort    int               `json:"restApiPort"`   // (RCON always derives from the game port)
+		RconPort       int               `json:"rconPort"`
+		RestApiPort    int               `json:"restApiPort"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid JSON")
@@ -158,9 +159,9 @@ func (a *api) create(w http.ResponseWriter, r *http.Request) {
 		WorldSettings:  world,
 		CreatedAt:      time.Now(),
 	}
-	if err := a.st.CreateReserving(&sv, body.GamePort, body.QueryPort, body.RestApiPort, extraUDP, extraTCP); err != nil {
+	if err := a.st.CreateReserving(&sv, body.GamePort, body.QueryPort, body.RconPort, body.RestApiPort, extraUDP, extraTCP); err != nil {
 		status := http.StatusInternalServerError
-		if body.GamePort != 0 || body.QueryPort != 0 || body.RestApiPort != 0 {
+		if body.GamePort != 0 || body.QueryPort != 0 || body.RconPort != 0 || body.RestApiPort != 0 {
 			status = http.StatusConflict // a requested port was invalid or taken — a client error, not a server fault
 		}
 		writeErr(w, status, err.Error())

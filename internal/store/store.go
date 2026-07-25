@@ -154,19 +154,16 @@ func (s *Store) Get(id string) (Server, error) {
 // by protocol because tcp/udp are independent kernel port namespaces — see
 // the REST-port comment below.
 //
-// reqGame/reqQuery/reqRest, each independently optional (0 = auto), pin
-// specific ports instead of deriving everything from one shared offset —
+// reqGame/reqQuery/reqRcon/reqRest, each independently optional (0 = auto),
+// pin specific ports instead of deriving everything from one shared offset —
 // real operator port layouts don't stay in lockstep (verified against Jon's
 // own hand-run stacks: server 1 is game 8211/query 27015/rest 8212, but
 // server 2 is game 8213/query 27016/rest 8214 — query is +1 while game and
-// rest are +2, three independently-chosen numbers, not one offset applied
-// three times). RCON stays derived from the game port's own offset — it's
-// loopback-only and never appears in any of Jon's compose files, so there's
-// no real-world convention to match by making it independently settable
-// too. A collision on any *requested* port is a hard error, not silently
-// reassigned — reassigning would defeat the point of asking for a specific
-// port.
-func (s *Store) CreateReserving(v *Server, reqGame, reqQuery, reqRest int, extraUDP, extraTCP map[int]bool) error {
+// rest are +2, independently-chosen numbers, not one offset applied
+// repeatedly). A collision on any *requested* port is a hard error, not
+// silently reassigned — reassigning would defeat the point of asking for a
+// specific port.
+func (s *Store) CreateReserving(v *Server, reqGame, reqQuery, reqRcon, reqRest int, extraUDP, extraTCP map[int]bool) error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -221,25 +218,27 @@ func (s *Store) CreateReserving(v *Server, reqGame, reqQuery, reqRest int, extra
 		return requested, nil
 	}
 
+	// Each resolved port is marked used immediately (not just at the end) so
+	// two fields requested within the *same* create can't collide with each
+	// other either — e.g. rest and rcon both being pinned to the same number.
 	game, err := resolve(reqGame, 8211+base, udpUsed, "game")
 	if err != nil {
 		return err
 	}
+	usedGame[game] = true
 	query, err := resolve(reqQuery, 27015+base, udpUsed, "query")
 	if err != nil {
 		return err
 	}
+	usedQuery[query] = true
 	rest, err := resolve(reqRest, 8212+base, tcpUsed, "REST API")
 	if err != nil {
 		return err
 	}
-	// RCON always derives from the final game port's own offset (not
-	// independently requestable — see the doc comment above) and just
-	// increments past a collision, since nothing external depends on its
-	// exact value the way router forwards depend on game/query/rest.
-	rcon := 25575 + (game - 8211)
-	for tcpUsed(rcon) {
-		rcon++
+	usedRest[rest] = true
+	rcon, err := resolve(reqRcon, 25575+(game-8211), tcpUsed, "RCON")
+	if err != nil {
+		return err
 	}
 
 	v.GamePort, v.QueryPort, v.RconPort, v.RestPort = game, query, rcon, rest

@@ -41,6 +41,7 @@ export function NewServerModal({
   const [publicIp, setPublicIp] = useState('')
   const [gamePort, setGamePort] = useState('')
   const [queryPort, setQueryPort] = useState('')
+  const [rconPort, setRconPort] = useState('')
   const [restApiPort, setRestApiPort] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -70,6 +71,7 @@ export function NewServerModal({
         worldSettings,
         gamePort: gamePort.trim() ? Number(gamePort) : undefined,
         queryPort: queryPort.trim() ? Number(queryPort) : undefined,
+        rconPort: rconPort.trim() ? Number(rconPort) : undefined,
         restApiPort: restApiPort.trim() ? Number(restApiPort) : undefined,
       })
       onClose()
@@ -195,6 +197,21 @@ export function NewServerModal({
                   placeholder="auto"
                 />
               </label>
+            </div>
+            <div className="field-row" style={{ marginTop: 12 }}>
+              <label className="field">
+                <span>
+                  RCON port <em>optional</em>
+                </span>
+                <input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={rconPort}
+                  onChange={(e) => setRconPort(e.target.value)}
+                  placeholder="auto"
+                />
+              </label>
               <label className="field">
                 <span>
                   REST API port <em>optional</em>
@@ -211,8 +228,8 @@ export function NewServerModal({
             </div>
             <p className="note" style={{ margin: '6px 0 0' }}>
               Each port is independent — leave any blank to auto-assign it, or pin
-              specific ones to forward on your router ahead of time. RCON always follows
-              the game port automatically (it's loopback-only, never forwarded).
+              specific ones to forward on your router ahead of time. RCON/REST are
+              loopback-only regardless (never reachable off this host).
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               <span>

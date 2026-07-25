@@ -112,9 +112,9 @@ export interface CreateServerInput {
   difficulty?: string
   pvp?: boolean
   worldSettings?: Record<string, string>
-  // Each independently 0/omitted = auto-assign from the pool; set any to pin
-  // an exact port (RCON always derives from the game port, not settable here).
+  // Each independently 0/omitted = auto-assign from the pool; set any to pin an exact port.
   gamePort?: number
   queryPort?: number
+  rconPort?: number
   restApiPort?: number
 }
