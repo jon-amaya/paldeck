@@ -3,18 +3,25 @@ services:
     build: .
     container_name: paldeck
     restart: unless-stopped
-    # Host networking, same reason netbird-client uses it: Paldeck's own Go
-    # code reaches each managed Palworld server's RCON/REST API over
-    # 127.0.0.1:<host-published-port> (that's how the whole port-tracking
-    # design works — see internal/palworld/palworld.go). Under normal bridge
-    # networking, 127.0.0.1 inside Paldeck's container is Paldeck's own
-    # loopback, not the host's, so those calls fail with connection refused
-    # — confirmed live (broadcast to a real server failed exactly this way).
-    # Host networking makes 127.0.0.1 actually mean the host, matching how
-    # this worked when tested as a bare binary. `ports:` is meaningless
-    # under host networking (the app's :8080 bind directly is the host's
-    # :8080 already) so it's removed rather than left as dead config.
-    network_mode: host
+    ports:
+      # LAN-reachable, same as every other stack on this host (dockge,
+      # opengist, etc.) — the LAN is the trust boundary here, not this one
+      # service. The panel has no login of its own, so this assumes the LAN
+      # itself is trusted; don't forward this port past the router.
+      - 8080:8080
+    networks:
+      # Reaches each managed Palworld server's RCON/REST API by container
+      # name over this shared network (internal/docker Create() attaches
+      # every server Paldeck creates to it too) — not via the host's
+      # loopback. Same pattern already used for spotify/mongo on this host
+      # (MONGO_ENDPOINT=mongodb://mongo:27017/...) and for the palworld/
+      # palworld-2 stacks themselves, which already join this network.
+      # An earlier attempt used network_mode: host instead, which does fix
+      # the same reachability problem, but at the cost of losing Docker's
+      # automatic host-firewall exception for this container's own :8080 —
+      # this approach keeps the panel a normal, simply-published bridge
+      # container like everything else here.
+      - palworld
     volumes:
       # Paldeck is a Docker *client* (constitution §5) — it needs the socket
       # to create/manage the sibling Palworld containers it creates. This is
@@ -22,6 +29,9 @@ services:
       # acceptable here because the panel itself is admin-only via NetBird.
       - /var/run/docker.sock:/var/run/docker.sock
       - paldeck-data:/data
+networks:
+  palworld:
+    external: true
 volumes:
   paldeck-data:
     name: paldeck-data

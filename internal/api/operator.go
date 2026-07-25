@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"paldeck/internal/docker"
 	"paldeck/internal/palworld"
 	"paldeck/internal/store"
 )
@@ -20,7 +21,7 @@ func (a *api) pal(sv store.Server) *palworld.Client {
 	if sv.RestPort == 0 {
 		return nil
 	}
-	return palworld.New(sv.RestPort, sv.AdminPass)
+	return palworld.New(docker.ContainerName(sv.Name), sv.AdminPass)
 }
 
 // GET /api/servers/{id}/metrics

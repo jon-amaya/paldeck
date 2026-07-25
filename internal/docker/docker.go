@@ -20,12 +20,27 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 )
 
 // Image is the proven Palworld server image (the one you already run).
 const Image = "thijsvanloef/palworld-server-docker:latest"
+
+// Network is the shared Docker network every server Paldeck creates joins,
+// alongside Paldeck's own container (see docker-compose.yml) — this is how
+// Paldeck reaches each server's RCON/REST API (by container name), not via
+// the host's loopback. Matches Jon's own existing convention exactly: his
+// hand-run palworld/palworld-2 stacks already declare this same external
+// network, and other stacks on the host (spotify/mongo) already resolve
+// each other by container name over their own shared network the same way.
+const Network = "palworld"
+
+// ContainerName is the DNS-resolvable name a server's container gets on
+// Network — sanitizeName (api.go) already strips anything that wouldn't be
+// a valid hostname, so this is safe to use directly, no further escaping.
+func ContainerName(serverName string) string { return "paldeck-" + serverName }
 
 type Docker struct{ cli *client.Client }
 
@@ -141,7 +156,10 @@ func (d *Docker) Create(ctx context.Context, o CreateOpts) (string, error) {
 		}},
 	}
 
-	resp, err := d.cli.ContainerCreate(ctx, cfg, host, nil, nil, "paldeck-"+o.Name)
+	netConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{Network: {}},
+	}
+	resp, err := d.cli.ContainerCreate(ctx, cfg, host, netConfig, nil, ContainerName(o.Name))
 	if err != nil {
 		return "", err
 	}

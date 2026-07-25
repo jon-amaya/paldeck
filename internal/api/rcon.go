@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"paldeck/internal/docker"
 	"paldeck/internal/rcon"
 )
 
@@ -29,7 +30,11 @@ func (a *api) rconExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, err := rcon.Dial(r.Context(), fmt.Sprintf("127.0.0.1:%d", sv.RconPort), sv.AdminPass)
+	// RCON_PORT is set to sv.RconPort *inside* the container too (unlike
+	// REST, there's no separate fixed-internal-vs-published-host split for
+	// RCON — see docker.go), so the container-name address uses the real
+	// value, not a constant.
+	c, err := rcon.Dial(r.Context(), fmt.Sprintf("%s:%d", docker.ContainerName(sv.Name), sv.RconPort), sv.AdminPass)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "rcon connect: "+err.Error())
 		return

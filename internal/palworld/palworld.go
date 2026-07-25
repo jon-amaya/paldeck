@@ -1,6 +1,11 @@
 // Package palworld is a minimal client for the official Palworld dedicated
-// server REST API. We reach it on the server's 127.0.0.1-mapped host port;
-// auth is HTTP Basic, user "admin", password = the server's ADMIN_PASSWORD.
+// server REST API. We reach it by the server's container name over the
+// shared "palworld" Docker network (see docker.Network/docker.ContainerName)
+// — not via the host's loopback, since Paldeck itself runs containerized
+// and its own loopback isn't the host's. REST_API_PORT is always 8212
+// *inside* the container regardless of which host port it's published to
+// (docker.go hardcodes it — only the host-side mapping varies per server).
+// Auth is HTTP Basic, user "admin", password = the server's ADMIN_PASSWORD.
 // Every call carries a short timeout — the panel must degrade to "—" when a
 // server is down, never hang.
 package palworld
@@ -21,9 +26,12 @@ type Client struct {
 	hc   *http.Client
 }
 
-func New(restPort int, adminPass string) *Client {
+// New dials the server's REST API by its container name (e.g.
+// docker.ContainerName(serverName)) — container-to-container over the
+// shared network, resolved by Docker's embedded DNS.
+func New(containerName string, adminPass string) *Client {
 	return &Client{
-		base: fmt.Sprintf("http://127.0.0.1:%d", restPort),
+		base: fmt.Sprintf("http://%s:8212", containerName),
 		pass: adminPass,
 		hc:   &http.Client{Timeout: 3 * time.Second},
 	}
