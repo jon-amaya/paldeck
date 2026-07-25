@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -40,8 +41,16 @@ func main() {
 	}
 	defer dk.Close()
 
+	// The host disk-usage tile stats whatever filesystem the DB lives on —
+	// in production that's the bind-mounted data volume, so it reports the
+	// real underlying host disk.
+	diskPath, err := filepath.Abs(filepath.Dir(dbPath))
+	if err != nil {
+		diskPath = "."
+	}
+
 	webFS, _ := fs.Sub(webRoot, "frontend/dist")
-	handler := api.New(st, dk, webFS)
+	handler := api.New(st, dk, diskPath, webFS)
 
 	srv := &http.Server{Addr: addr, Handler: handler}
 	go func() {

@@ -42,7 +42,10 @@ const Network = "palworld"
 // a valid hostname, so this is safe to use directly, no further escaping.
 func ContainerName(serverName string) string { return "paldeck-" + serverName }
 
-type Docker struct{ cli *client.Client }
+type Docker struct {
+	cli     *client.Client
+	netPrev netSample // last cumulative network reading, for HostStats' rate calc (see host.go)
+}
 
 func New() (*Docker, error) {
 	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())

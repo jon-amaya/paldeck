@@ -5,6 +5,7 @@ import { ACCENTS, applyAccent, getSavedAccentId } from './accent'
 import type {
   CreatedServer,
   CreateServerInput,
+  HostStats,
   LifecycleAction,
   PendingAction,
   Server,
@@ -15,6 +16,7 @@ import { ServerCard } from './components/ServerRow'
 import { ServerDetail, type DetailTab } from './components/ServerDetail'
 import { NewServerModal } from './components/NewServerModal'
 import { CreatedModal } from './components/CreatedModal'
+import { HostCard } from './components/HostCard'
 
 const APP_VERSION = 'v0.4-dev'
 
@@ -52,6 +54,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   // Per-running-server metrics for the home stats + live player counts.
   const [metricsById, setMetricsById] = useState<Record<string, ServerMetrics>>({})
+  // Host-wide resources (memory/disk/network) for the overview's Host card.
+  const [hostStats, setHostStats] = useState<HostStats | undefined>(undefined)
   // The success dialog reveals the admin password once, right after create.
   const [created, setCreated] = useState<CreatedServer | null>(null)
 
@@ -71,6 +75,9 @@ export default function App() {
     } catch (e) {
       setError((e as Error).message)
     }
+    // Best-effort, separate from the try/catch above — a host-stats hiccup
+    // shouldn't surface as the same error toast as a server-list failure.
+    api.hostStats().then(setHostStats).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -213,6 +220,7 @@ export default function App() {
           />
         ) : (
           <>
+            <HostCard stats={hostStats} />
             <div className="stat-grid">
               <div className="stat-tile">
                 <span className="stat-ic"><IcServers /></span>

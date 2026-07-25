@@ -11,6 +11,7 @@ import type {
   Pal,
   Backup,
   ImportCandidate,
+  HostStats,
 } from './types'
 
 async function unwrap<T>(r: Response): Promise<T> {
@@ -117,6 +118,8 @@ export const api = {
     fetch(`/api/servers/${id}/players/${uid}/${kind}`, { method: 'POST' }).then(
       (r) => unwrap<{ status: string }>(r),
     ),
+
+  hostStats: () => fetch('/api/host/stats').then((r) => unwrap<HostStats>(r)),
 
   importCandidates: () =>
     fetch('/api/import-candidates').then((r) =>

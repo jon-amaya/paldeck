@@ -89,6 +89,21 @@ export interface Backup {
   modTime: string
 }
 
+// GET /api/host/stats — resources across the whole Docker host, not any one
+// server. Memory/disk are real host-wide figures; network is the sum of
+// Paldeck-managed containers' own traffic (a containerized panel can't see
+// the host's real NICs without extra mounts it doesn't ask for).
+export interface HostStats {
+  memTotal: number
+  memAvailable: number
+  memUsed: number
+  diskTotal: number
+  diskFree: number
+  diskUsed: number
+  netRxBytesPerSec: number
+  netTxBytesPerSec: number
+}
+
 // One entry of GET /api/import-candidates — an existing, unmanaged Palworld
 // container whose world can be imported into a new Paldeck-created server.
 export interface ImportCandidate {

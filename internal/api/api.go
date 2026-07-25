@@ -19,15 +19,17 @@ import (
 )
 
 type api struct {
-	st *store.Store
-	dk *docker.Docker
+	st       *store.Store
+	dk       *docker.Docker
+	diskPath string // directory statted for the host disk-usage tile
 }
 
-func New(st *store.Store, dk *docker.Docker, web fs.FS) http.Handler {
-	a := &api{st: st, dk: dk}
+func New(st *store.Store, dk *docker.Docker, diskPath string, web fs.FS) http.Handler {
+	a := &api{st: st, dk: dk, diskPath: diskPath}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", a.health)
+	mux.HandleFunc("GET /api/host/stats", a.hostStats)
 	mux.HandleFunc("GET /api/servers", a.list)
 	mux.HandleFunc("POST /api/servers", a.create)
 	mux.HandleFunc("POST /api/servers/{id}/start", a.action(a.dk.Start))
@@ -66,6 +68,10 @@ func New(st *store.Store, dk *docker.Docker, web fs.FS) http.Handler {
 
 func (a *api) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (a *api) hostStats(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, a.dk.HostStats(r.Context(), a.diskPath))
 }
 
 func (a *api) list(w http.ResponseWriter, r *http.Request) {
