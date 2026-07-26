@@ -7,12 +7,13 @@ import { RconPanel } from './RconPanel'
 import { PlayersPanel } from './PlayersPanel'
 import { PalsPanel } from './PalsPanel'
 import { MapView } from './MapView'
+import { BreedingPanel } from './BreedingPanel'
 import { WorldSettingsPanel } from './WorldSettingsPanel'
 import { BackupsPanel } from './BackupsPanel'
 import { BroadcastModal } from './BroadcastModal'
 import { Sparkline } from './Sparkline'
 
-const TABS = ['Overview', 'Console', 'Players', 'Pals', 'Map', 'Backups', 'Settings'] as const
+const TABS = ['Overview', 'Console', 'Players', 'Pals', 'Map', 'Breeding', 'Backups', 'Settings'] as const
 export type DetailTab = (typeof TABS)[number]
 type Tab = DetailTab
 
@@ -212,6 +213,10 @@ export function ServerDetail({
 
       <section className={`tabpanel ${tab === 'Map' ? '' : 'hidden'}`}>
         {tab === 'Map' && <MapView id={s.id} />}
+      </section>
+
+      <section className={`tabpanel ${tab === 'Breeding' ? '' : 'hidden'}`}>
+        {tab === 'Breeding' && <BreedingPanel id={s.id} />}
       </section>
 
       <section className={`tabpanel ${tab === 'Backups' ? '' : 'hidden'}`}>

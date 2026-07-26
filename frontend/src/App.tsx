@@ -27,6 +27,9 @@ const IcServers = () => (
 const IcPaw = () => (
   <svg viewBox="0 0 24 24"><circle cx="12" cy="15" r="3.4" /><circle cx="6" cy="9.6" r="1.9" /><circle cx="10.2" cy="6.4" r="1.9" /><circle cx="13.8" cy="6.4" r="1.9" /><circle cx="18" cy="9.6" r="1.9" /></svg>
 )
+const IcEgg = () => (
+  <svg viewBox="0 0 24 24"><path d="M12 21c4.4 0 7-3.4 7-8 0-6-4-11-7-11S5 7 5 13c0 4.6 2.6 8 7 8z" /></svg>
+)
 const IcMap = () => (
   <svg viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z" /><path d="M9 4v14M15 6v14" /></svg>
 )
@@ -178,6 +181,9 @@ export default function App() {
             </button>
           ))}
         </div>
+        <button className="nav" onClick={() => openFirstAt('Breeding')} title="Breeding calculator">
+          <span className="ic"><IcEgg /></span> Breeding
+        </button>
         <button className="nav" onClick={() => openFirstAt('Pals')} title="Pal search">
           <span className="ic"><IcPaw /></span> Pals
         </button>
