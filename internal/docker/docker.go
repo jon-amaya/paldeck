@@ -383,24 +383,110 @@ func (d *Docker) RestoreBackup(ctx context.Context, id, worldID, timestamp strin
 	return d.cli.CopyToContainer(ctx, id, dst, &buf, container.CopyToContainerOptions{})
 }
 
+var liveWorldIDRe = regexp.MustCompile(`^0/([0-9A-F]{32})/Level\.sav$`)
+
+// activeWorldID finds dstID's own live (non-backup) world-save folder name,
+// or "" if it doesn't have one yet (never started). Palworld derives this
+// ID itself — from the server's own config, on boot — so it's never the
+// same as another server's, and there's no way to predict it in advance;
+// the only way to know it is to ask the destination directly.
+func (d *Docker) activeWorldID(ctx context.Context, id string) (string, error) {
+	rc, _, err := d.cli.CopyFromContainer(ctx, id, "/palworld/Pal/Saved/SaveGames/0")
+	if err != nil {
+		return "", err
+	}
+	defer rc.Close()
+	tr := tar.NewReader(rc)
+	var found []string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if m := liveWorldIDRe.FindStringSubmatch(hdr.Name); m != nil {
+			found = append(found, m[1])
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("destination has multiple world folders (%s) — ambiguous", strings.Join(found, ", "))
+	}
+}
+
+// ensureWorldID returns dstID's own world-save folder name, bootstrapping
+// one first if dstID has never been started. A never-started container's
+// volume has no world folder at all — Palworld only creates one, under an
+// ID of its own choosing, once it actually boots — so ImportSave has to
+// start it, wait for that default (empty) world to appear, and stop it
+// again before there's anywhere valid to graft the source's data into.
+func (d *Docker) ensureWorldID(ctx context.Context, id string) (string, error) {
+	worldID, err := d.activeWorldID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if worldID != "" {
+		return worldID, nil
+	}
+	if err := d.Start(ctx, id); err != nil {
+		return "", fmt.Errorf("bootstrapping default world: %w", err)
+	}
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		worldID, err = d.activeWorldID(ctx, id)
+		if err != nil {
+			_ = d.Stop(ctx, id)
+			return "", err
+		}
+		if worldID != "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = d.Stop(ctx, id)
+			return "", fmt.Errorf("timed out waiting for the server to generate its default world")
+		}
+		time.Sleep(2 * time.Second)
+	}
+	if err := d.Stop(ctx, id); err != nil {
+		return "", fmt.Errorf("stopping after world bootstrap: %w", err)
+	}
+	return worldID, nil
+}
+
 // ImportSave copies srcID's live world (all files under SaveGames/0, minus
-// its own nested backups — same exclusion ReadWorldLevelSav uses) into dstID
-// so dstID picks it up as its own world on first boot. Meant to run against
-// a freshly created, not-yet-started server — never touches srcID (read-only
-// CopyFromContainer), so the source (typically an unmanaged, hand-run server
-// Paldeck doesn't otherwise touch) is completely unaffected either way.
+// its own nested backups — same exclusion ReadWorldLevelSav uses) into
+// dstID's own world folder, so dstID picks it up as its world on next
+// boot. Never touches srcID (read-only CopyFromContainer), so the source
+// (typically an unmanaged, hand-run server Paldeck doesn't otherwise touch)
+// is completely unaffected either way.
 //
-// Copies to /palworld, not .../SaveGames/0 directly: a container that's
-// never been started has an empty volume — none of Pal/, Pal/Saved/, or
-// Pal/Saved/SaveGames/ exist yet (Palworld itself creates that tree on
-// first run), and CopyToContainer requires its destination to already
-// exist. /palworld is the volume mount point, so it's always there.
-// CopyFromContainer's tar is rooted at the basename of the path requested
-// ("0/…", confirmed by RestoreBackup's own prefix-stripping below) — each
-// entry is rewritten onto the full Pal/Saved/SaveGames/0/… path, with
-// explicit synthetic directory headers for every intermediate level so
-// extraction doesn't depend on Docker auto-creating missing parents.
+// Grafts under dstID's OWN world ID (from ensureWorldID), not srcID's —
+// confirmed live that preserving the source's folder name silently does
+// nothing, since Palworld doesn't scan SaveGames/0 for "a" world to adopt,
+// it looks for the specific ID its own config derives and generates a
+// fresh empty one under that ID if it's missing, ignoring whatever else
+// happens to be sitting in the directory.
+//
+// Copies to /palworld, not .../SaveGames/0 directly: CopyToContainer
+// requires its destination to already exist, and /palworld (the volume
+// mount point) always does even before Pal/Saved/SaveGames/ has been
+// created. CopyFromContainer's tar is rooted at the basename of the path
+// requested ("0/<srcWorldID>/…") — each entry is re-rooted onto
+// Pal/Saved/SaveGames/0/<dstWorldID>/…, with explicit synthetic directory
+// headers for every intermediate level so extraction doesn't depend on
+// Docker auto-creating missing parents.
 func (d *Docker) ImportSave(ctx context.Context, srcID, dstID string) error {
+	worldID, err := d.ensureWorldID(ctx, dstID)
+	if err != nil {
+		return fmt.Errorf("preparing destination world folder: %w", err)
+	}
+
 	rc, _, err := d.cli.CopyFromContainer(ctx, srcID, "/palworld/Pal/Saved/SaveGames/0")
 	if err != nil {
 		return err
@@ -410,7 +496,7 @@ func (d *Docker) ImportSave(ctx context.Context, srcID, dstID string) error {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	now := time.Now()
-	for _, dir := range []string{"Pal", "Pal/Saved", "Pal/Saved/SaveGames", "Pal/Saved/SaveGames/0"} {
+	for _, dir := range []string{"Pal", "Pal/Saved", "Pal/Saved/SaveGames", "Pal/Saved/SaveGames/0", "Pal/Saved/SaveGames/0/" + worldID} {
 		if err := tw.WriteHeader(&tar.Header{
 			Name: dir + "/", Typeflag: tar.TypeDir, Mode: 0755, ModTime: now,
 		}); err != nil {
@@ -430,7 +516,15 @@ func (d *Docker) ImportSave(ctx context.Context, srcID, dstID string) error {
 		if strings.Contains(hdr.Name, "/backup/") {
 			continue // historical snapshots, not part of the live world
 		}
-		hdr.Name = "Pal/Saved/SaveGames/0/" + strings.TrimPrefix(hdr.Name, "0/")
+		// hdr.Name is "0/<srcWorldID>/rest…" — drop both of the first two
+		// segments (the tar root and the source's own world ID) and
+		// re-root the remainder under the destination's world ID instead.
+		afterRoot := strings.TrimPrefix(hdr.Name, "0/")
+		slash := strings.IndexByte(afterRoot, '/')
+		if slash < 0 {
+			continue // a bare world-ID directory entry, no file beneath it
+		}
+		hdr.Name = "Pal/Saved/SaveGames/0/" + worldID + "/" + afterRoot[slash+1:]
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
