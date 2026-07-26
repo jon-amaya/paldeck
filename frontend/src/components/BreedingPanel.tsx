@@ -5,13 +5,16 @@ import { loadPalData, speciesKey, type PalGameData } from '../palData'
 import { loadBreedingData, computeBreedingPlan, type BreedingData, type BreedingPlan } from '../breeding'
 
 // Species chip: icon + display name, used for both parents and the child in
-// each breeding step — same visual language as PalsPanel's pal-cell.
-function Species({ id, gd }: { id: string; gd: PalGameData }) {
+// each breeding step — same visual language as PalsPanel's pal-cell. Marks
+// parents you already own so the path is legible at a glance: which of the
+// two chips in a "A x B -> C" row you can breed right now versus still need.
+function Species({ id, gd, owned }: { id: string; gd: PalGameData; owned?: boolean }) {
   const info = gd.species.get(id)
   return (
     <span className="pal-cell">
       {info && <img className="pal-ic" src={`/game-data/pals/${info.icon}`} alt="" />}
       {info?.name ?? id}
+      {owned && <span className="chip-inline chip-owned">have it</span>}
     </span>
   )
 }
@@ -124,7 +127,7 @@ export function BreedingPanel({ id }: { id: string }) {
       )}
 
       {target && result?.kind === 'plan' && (
-        <BreedingResult plan={result.plan} gd={gd} target={target.name} />
+        <BreedingResult plan={result.plan} gd={gd} target={target.name} owned={owned} />
       )}
     </>
   )
@@ -139,7 +142,17 @@ function catchLocationsOf(gd: PalGameData, id: string): SpawnPoint[] {
   return (gd.bossSpawns.get(id) ?? []).map((b) => ({ x: b.x, y: b.y, label: `boss · lvl ${b.lv}` }))
 }
 
-function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameData; target: string }) {
+function BreedingResult({
+  plan,
+  gd,
+  target,
+  owned,
+}: {
+  plan: BreedingPlan
+  gd: PalGameData
+  target: string
+  owned: Set<string>
+}) {
   const catchLocations = (id: string) => catchLocationsOf(gd, id)
 
   if (plan.steps.length === 0 && plan.catches.length === 1 && plan.catches[0] === plan.target) {
@@ -148,7 +161,9 @@ function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameD
     return (
       <div className="placeholder">
         <b>No breeding needed</b>
-        <p>{target} {isBoss && points.length > 0 ? 'is a boss encounter' : 'spawns in the wild'} — catch it directly.</p>
+        <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <Species id={plan.target} gd={gd} /> {isBoss && points.length > 0 ? 'is a boss encounter' : 'spawns in the wild'} — catch it directly.
+        </p>
         <div className="souls" style={{ justifyContent: 'center', marginTop: 10 }}>
           {points.slice(0, 12).map((p, i) => (
             <span key={i} className="spawn-chip mono">
@@ -164,25 +179,33 @@ function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameD
     <>
       <p className="map-note" style={{ marginBottom: 10 }}>
         {plan.steps.length} breeding step{plan.steps.length === 1 ? '' : 's'} to {target}
-        {plan.catches.length > 0 &&
-          ` · ${plan.catches.length} pal${plan.catches.length === 1 ? '' : 's'} to catch first`}
+        {plan.catches.length > 0
+          ? ` · ${plan.catches.length} pal${plan.catches.length === 1 ? '' : 's'} to catch first`
+          : ' · you already have everything this needs'}
       </p>
 
       <div className="wsform">
-        {plan.steps.map((step, i) => (
-          <div className="formcard" key={i}>
-            <div className="formcard-head">
-              <b>Step {i + 1}</b>
+        {plan.steps.map((step, i) => {
+          // A step's child becomes available for the *next* step once bred
+          // here, so it counts as "have it" for anything downstream even
+          // before this plan is actually carried out.
+          const producedSoFar = plan.steps.slice(0, i).map((s) => s.child)
+          const has = (sid: string) => owned.has(sid) || producedSoFar.includes(sid)
+          return (
+            <div className="formcard" key={i}>
+              <div className="formcard-head">
+                <b>Step {i + 1}</b>
+              </div>
+              <div className="field-row" style={{ alignItems: 'center' }}>
+                <Species id={step.a} gd={gd} owned={has(step.a)} />
+                <span className="mut">×</span>
+                <Species id={step.b} gd={gd} owned={has(step.b)} />
+                <span className="mut">→</span>
+                <Species id={step.child} gd={gd} />
+              </div>
             </div>
-            <div className="field-row" style={{ alignItems: 'center' }}>
-              <Species id={step.a} gd={gd} />
-              <span className="mut">×</span>
-              <Species id={step.b} gd={gd} />
-              <span className="mut">→</span>
-              <Species id={step.child} gd={gd} />
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {plan.catches.length > 0 && (
