@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"paldeck/internal/docker"
+	"paldeck/internal/palsave"
 	"paldeck/internal/palworld"
 	"paldeck/internal/store"
 )
@@ -114,28 +116,109 @@ func (a *api) metrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GET /api/servers/{id}/players
+// PlayerEntry is one row of GET /api/servers/{id}/players — either someone
+// currently online (full REST fields) or someone who isn't right now but
+// has been before, shown with whatever's known about when. UserID is only
+// ever populated for people Paldeck has directly observed online (see
+// store.PlayerIdentity) — the save itself never carries a Steam id, so an
+// entry without one can be shown but not banned until they reconnect once.
+type PlayerEntry struct {
+	Name      string    `json:"name"`
+	PlayerID  string    `json:"playerId"`
+	UserID    string    `json:"userId,omitempty"`
+	Online    bool      `json:"online"`
+	IP        string    `json:"ip,omitempty"`
+	Ping      float64   `json:"ping,omitempty"`
+	LocationX float64   `json:"location_x,omitempty"`
+	LocationY float64   `json:"location_y,omitempty"`
+	Level     int       `json:"level,omitempty"`
+	LastSeen  time.Time `json:"lastSeen,omitzero"`
+}
+
+// GET /api/servers/{id}/players — merges three sources: who's online right
+// now (REST), everyone Paldeck has directly seen online before (its own
+// remembered identities, the only source with a banable Steam id), and the
+// save's own guild data (LastOnline per player, covering people Paldeck
+// never happened to observe live — e.g. anyone who last played before this
+// existed). A player who's offline still shows up instead of disappearing
+// the moment they disconnect.
 func (a *api) players(w http.ResponseWriter, r *http.Request) {
 	sv, err := a.st.Get(r.PathValue("id"))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "server not found")
 		return
 	}
-	pc := a.pal(sv)
-	if pc == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, "players": []any{}})
-		return
+	ctx := r.Context()
+	byUID := map[string]*PlayerEntry{}
+
+	restOK := false
+	if pc := a.pal(sv); pc != nil {
+		if list, err := pc.Players(ctx); err == nil {
+			restOK = true
+			now := time.Now()
+			for _, p := range list {
+				uid := strings.ToLower(p.PlayerID) // REST uppercases; the save's own guid() encoding is lowercase
+				byUID[uid] = &PlayerEntry{
+					Name: p.Name, PlayerID: p.PlayerID, UserID: p.UserID, Online: true,
+					IP: p.IP, Ping: p.Ping, LocationX: p.LocationX, LocationY: p.LocationY, Level: p.Level,
+					LastSeen: now,
+				}
+				_ = a.st.RememberPlayer(sv.ID, uid, p.UserID, p.Name, now)
+			}
+		}
 	}
-	list, err := pc.Players(r.Context())
-	if err != nil {
-		// Server stopped or still booting — an empty, unavailable list, not a 500.
-		writeJSON(w, http.StatusOK, map[string]any{"available": false, "players": []any{}})
-		return
+
+	if identities, err := a.st.PlayerIdentities(sv.ID); err == nil {
+		for uid, id := range identities {
+			if _, ok := byUID[uid]; ok {
+				continue // already have the live entry, which is always fresher
+			}
+			byUID[uid] = &PlayerEntry{Name: id.Name, PlayerID: uid, UserID: id.UserID, Online: false, LastSeen: id.LastSeen}
+		}
 	}
-	if list == nil {
-		list = []palworld.Player{}
+
+	if sv.ContainerID != "" {
+		if sav, err := a.dk.ReadWorldLevelSav(ctx, sv.ContainerID); err == nil {
+			if raw, err := palsave.Decompress(ctx, sav); err == nil {
+				if groups, err := palsave.ExtractGroups(ctx, raw); err == nil {
+					for _, g := range groups {
+						if g.Type != "Guild" && g.Type != "IndependentGuild" {
+							continue
+						}
+						for _, m := range g.Members {
+							uid := strings.ToLower(m.PlayerUID)
+							if uid == "" {
+								continue
+							}
+							if e, ok := byUID[uid]; ok {
+								if e.LastSeen.IsZero() && !m.LastOnline.IsZero() {
+									e.LastSeen = m.LastOnline // fill a gap only, never downgrade a fresher record
+								}
+								continue
+							}
+							if m.LastOnline.IsZero() {
+								continue
+							}
+							byUID[uid] = &PlayerEntry{Name: m.PlayerName, PlayerID: uid, Online: false, LastSeen: m.LastOnline}
+						}
+					}
+				}
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"available": true, "players": list})
+
+	out := make([]PlayerEntry, 0, len(byUID))
+	for _, e := range byUID {
+		out = append(out, *e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Online != out[j].Online {
+			return out[i].Online
+		}
+		return out[i].LastSeen.After(out[j].LastSeen)
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{"available": restOK || len(out) > 0, "players": out})
 }
 
 // POST /api/servers/{id}/broadcast  {"message": "..."}

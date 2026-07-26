@@ -61,6 +61,26 @@ CREATE TABLE IF NOT EXISTS servers (
   created_at      DATETIME NOT NULL
 );`
 
+// playerIdentitiesSchema is a separate statement (not appended to schema)
+// since Exec is only ever proven to run one statement at a time in this
+// codebase — see the migrations loop below, each its own Exec call.
+//
+// Remembers every player Paldeck has ever seen online, per server: the
+// world save itself only ever stores Palworld's own internal player UID,
+// never the Steam ID, so without this an offline player can be *shown*
+// (via the save's own guild data) but never banned — there'd be no userid
+// left to hand Palworld's ban API once they've disconnected. Updated
+// opportunistically on every successful live players poll.
+const playerIdentitiesSchema = `
+CREATE TABLE IF NOT EXISTS player_identities (
+  server_id  TEXT NOT NULL,
+  player_uid TEXT NOT NULL,
+  user_id    TEXT NOT NULL DEFAULT '',
+  name       TEXT NOT NULL DEFAULT '',
+  last_seen  DATETIME NOT NULL,
+  PRIMARY KEY (server_id, player_uid)
+);`
+
 // migrations upgrade an older servers table to the current schema. Each is
 // idempotent: on a fresh DB the columns already exist (from schema above) so
 // the ALTER fails with "duplicate column name", which we ignore. On an old DB
@@ -86,6 +106,9 @@ func Open(path string) (*Store, error) {
 	// "database is locked" entirely (found by the 002 concurrency stress test).
 	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(schema); err != nil {
+		return nil, err
+	}
+	if _, err := db.Exec(playerIdentitiesSchema); err != nil {
 		return nil, err
 	}
 	for _, m := range migrations {
@@ -288,3 +311,42 @@ func (s *Store) Delete(id string) error {
 	return err
 }
 
+// PlayerIdentity is one player Paldeck has directly observed online for a
+// given server, remembered so they can still be identified (and banned)
+// after disconnecting.
+type PlayerIdentity struct {
+	PlayerUID string    `json:"playerUid"` // lowercase hex, matches the save's own GUID encoding
+	UserID    string    `json:"userId"`    // Steam id, e.g. "steam_765..." — only ever known live
+	Name      string    `json:"name"`
+	LastSeen  time.Time `json:"lastSeen"`
+}
+
+// RememberPlayer upserts one identity — called once per player on every
+// successful live players poll, not just on join, so LastSeen keeps
+// tracking the truth for as long as they stay connected.
+func (s *Store) RememberPlayer(serverID, playerUID, userID, name string, seenAt time.Time) error {
+	_, err := s.db.Exec(
+		`INSERT INTO player_identities (server_id, player_uid, user_id, name, last_seen) VALUES (?,?,?,?,?)
+		 ON CONFLICT (server_id, player_uid) DO UPDATE SET user_id=excluded.user_id, name=excluded.name, last_seen=excluded.last_seen`,
+		serverID, playerUID, userID, name, seenAt)
+	return err
+}
+
+// PlayerIdentities returns everything remembered for one server, keyed by
+// player UID for easy merging against the save's own guild data.
+func (s *Store) PlayerIdentities(serverID string) (map[string]PlayerIdentity, error) {
+	rows, err := s.db.Query(`SELECT player_uid, user_id, name, last_seen FROM player_identities WHERE server_id = ?`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]PlayerIdentity{}
+	for rows.Next() {
+		var pi PlayerIdentity
+		if err := rows.Scan(&pi.PlayerUID, &pi.UserID, &pi.Name, &pi.LastSeen); err != nil {
+			return nil, err
+		}
+		out[pi.PlayerUID] = pi
+	}
+	return out, rows.Err()
+}

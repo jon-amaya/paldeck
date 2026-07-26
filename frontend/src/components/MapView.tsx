@@ -255,12 +255,12 @@ export function MapView({ id }: { id: string }) {
               )
             })}
 
-          {players.map((p) => {
-            const mc = mapCoord(p.location_x, p.location_y)
+          {players.filter((p) => p.online && p.location_x != null && p.location_y != null).map((p) => {
+            const mc = mapCoord(p.location_x!, p.location_y!)
             const pos = mapToPct(mc.x, mc.y)
             return (
               <span
-                key={p.userId}
+                key={p.playerId}
                 className="mk mk-player"
                 style={{ left: `${pos.left}%`, top: `${pos.top}%` }}
                 title={`${p.name} · lv ${p.level} · ${mc.x}, ${mc.y}`}
@@ -288,9 +288,12 @@ export function MapView({ id }: { id: string }) {
         })()}
 
       <p className="map-note" style={{ marginTop: 8 }}>
-        {players.length > 0
-          ? `${players.length} player${players.length === 1 ? '' : 's'} online — markers update every 5s.`
-          : 'No players online — join the server and watch yourself appear.'}
+        {(() => {
+          const n = players.filter((p) => p.online).length
+          return n > 0
+            ? `${n} player${n === 1 ? '' : 's'} online — markers update every 5s.`
+            : 'No players online — join the server and watch yourself appear.'
+        })()}
       </p>
     </>
   )

@@ -114,15 +114,20 @@ export interface ImportCandidate {
 }
 
 // One entry of GET /api/servers/{id}/players.
+// online has full REST fields; offline players only have what's been
+// remembered (userId, if Paldeck has directly seen them before) or what
+// the world save's own guild data carries (name + lastSeen only).
 export interface PalPlayer {
   name: string
   playerId: string
-  userId: string
-  ip: string
-  ping: number
-  location_x: number
-  location_y: number
-  level: number
+  userId?: string
+  online: boolean
+  ip?: string
+  ping?: number
+  location_x?: number
+  location_y?: number
+  level?: number
+  lastSeen?: string
 }
 
 // What the New Server form sends to POST /api/servers. Optional fields are
