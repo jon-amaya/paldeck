@@ -67,6 +67,7 @@ export function PlayersPanel({ id }: { id: string }) {
               <th>Player</th>
               <th>Level</th>
               <th>Ping</th>
+              <th>IP</th>
               <th>Location</th>
               <th></th>
             </tr>
@@ -77,6 +78,7 @@ export function PlayersPanel({ id }: { id: string }) {
                 <td className="nm">{p.name}</td>
                 <td>{p.level}</td>
                 <td className="mono mut">{Math.round(p.ping)} ms</td>
+                <td className="mono mut">{p.ip || '—'}</td>
                 <td className="mono mut">
                   {(() => {
                     const c = mapCoord(p.location_x, p.location_y)
