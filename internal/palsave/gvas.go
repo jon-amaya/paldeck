@@ -266,6 +266,24 @@ func (r *reader) property(typ string, size int, path string) any {
 			out = append(out, KV{k, v})
 		}
 		return out
+	case "SetProperty":
+		// TSet<T> — identical wire shape to MapProperty's key stream (same
+		// "removed count" placeholder + count + elements), just one type
+		// instead of a key/value pair. Elements use the same simple,
+		// header-less encoding as map keys/values (mapElem), not the
+		// verbose per-element StructProperty header ArrayProperty uses.
+		inner := r.fstring()
+		r.propGuid()
+		_ = r.u32() // removed count
+		n := int(r.u32())
+		if n > 10_000_000 {
+			r.fail("implausible set count %d at %s", n, path)
+		}
+		out := make([]any, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, r.mapElem(inner, path+".Elem"))
+		}
+		return out
 	default:
 		r.fail("unknown property type %q at %s (size %d)", typ, path, size)
 		return nil
