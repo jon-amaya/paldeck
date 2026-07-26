@@ -48,6 +48,7 @@ export function BreedingPanel({ id }: { id: string }) {
     const s = new Set<string>()
     if (!gd) return s
     for (const [key, points] of gd.spawns) if (points.length > 0) s.add(key)
+    for (const key of gd.bossSpawns.keys()) s.add(key)
     return s
   }, [gd])
 
@@ -118,7 +119,7 @@ export function BreedingPanel({ id }: { id: string }) {
       {target && result?.kind === 'no-path' && (
         <div className="placeholder">
           <b>No known path</b>
-          <p>{target.name} has no wild spawns and no known breeding combo produces it in this dataset.</p>
+          <p>{target.name} has no wild spawns, no known boss encounter, and no known breeding combo produces it in this dataset.</p>
         </div>
       )}
 
@@ -129,17 +130,28 @@ export function BreedingPanel({ id }: { id: string }) {
   )
 }
 
+// Wild spawns first; falls back to boss/field-boss encounters for species
+// with no regular wild spawn (Jetragon and other boss-only pals).
+type SpawnPoint = { x: number; y: number; label?: string }
+function catchLocationsOf(gd: PalGameData, id: string): SpawnPoint[] {
+  const wild = gd.spawns.get(id) ?? []
+  if (wild.length > 0) return wild
+  return (gd.bossSpawns.get(id) ?? []).map((b) => ({ x: b.x, y: b.y, label: `boss · lvl ${b.lv}` }))
+}
+
 function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameData; target: string }) {
-  const catchLocations = (id: string) => gd.spawns.get(id) ?? []
+  const catchLocations = (id: string) => catchLocationsOf(gd, id)
 
   if (plan.steps.length === 0 && plan.catches.length === 1 && plan.catches[0] === plan.target) {
+    const points = catchLocations(plan.target)
+    const isBoss = gd.spawns.get(plan.target)?.length === 0 || !gd.spawns.has(plan.target)
     return (
       <div className="placeholder">
         <b>No breeding needed</b>
-        <p>{target} spawns in the wild — catch it directly.</p>
+        <p>{target} {isBoss && points.length > 0 ? 'is a boss encounter' : 'spawns in the wild'} — catch it directly.</p>
         <div className="souls" style={{ justifyContent: 'center', marginTop: 10 }}>
-          {catchLocations(plan.target).slice(0, 12).map((p, i) => (
-            <span key={i} className="spawn-chip mono">{p.x}, {p.y}</span>
+          {points.slice(0, 12).map((p, i) => (
+            <span key={i} className="spawn-chip mono">{p.label ? `${p.label} · ` : ''}{p.x}, {p.y}</span>
           ))}
         </div>
       </div>
@@ -183,11 +195,13 @@ function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameD
                     <Species id={id} gd={gd} />
                   </div>
                   {points.length === 0 ? (
-                    <p className="note">No known wild spawn — check the in-game map or an event.</p>
+                    <p className="note">No known wild spawn or boss encounter — check the in-game map or an event.</p>
                   ) : (
                     <div className="souls">
                       {points.slice(0, 12).map((p, i) => (
-                        <span key={i} className="spawn-chip mono">{p.x}, {p.y}</span>
+                        <span key={i} className="spawn-chip mono">
+                          {p.label ? `${p.label} · ` : ''}{p.x}, {p.y}
+                        </span>
                       ))}
                       {points.length > 12 && (
                         <span className="mut" style={{ fontSize: 12 }}>+{points.length - 12} more</span>

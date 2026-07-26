@@ -34,6 +34,7 @@ export interface PalGameData {
   species: Map<string, SpeciesInfo>
   passives: Map<string, PassiveInfo>
   spawns: Map<string, { x: number; y: number }[]>
+  bossSpawns: Map<string, { x: number; y: number; lv: number }[]>
   skills: Map<string, SkillInfo>
   landmarks: Landmark[]
   bosses: Boss[]
@@ -64,10 +65,27 @@ export function loadPalData(): Promise<PalGameData> {
       )
       const skills = new Map<string, SkillInfo>()
       for (const s of sk as SkillInfo[]) skills.set(s.id.toLowerCase(), s)
+
+      // Field bosses (and boss-only pals like Jetragon, which have no wild
+      // spawn points at all) are the only way to get some species — matched
+      // back to a species key by display name since bosses.json only has
+      // names, not ids.
+      const keyByName = new Map<string, string>()
+      for (const [key, info] of species) keyByName.set(info.name, key)
+      const bossSpawns = new Map<string, { x: number; y: number; lv: number }[]>()
+      for (const b of bs as Boss[]) {
+        const key = keyByName.get(b.name.en)
+        if (!key) continue
+        const list = bossSpawns.get(key) ?? []
+        list.push({ x: b.x, y: b.y, lv: b.lv })
+        bossSpawns.set(key, list)
+      }
+
       return {
         species,
         passives,
         spawns,
+        bossSpawns,
         skills,
         landmarks: lm as Landmark[],
         bosses: bs as Boss[],
