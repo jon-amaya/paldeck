@@ -151,7 +151,9 @@ function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameD
         <p>{target} {isBoss && points.length > 0 ? 'is a boss encounter' : 'spawns in the wild'} — catch it directly.</p>
         <div className="souls" style={{ justifyContent: 'center', marginTop: 10 }}>
           {points.slice(0, 12).map((p, i) => (
-            <span key={i} className="spawn-chip mono">{p.label ? `${p.label} · ` : ''}{p.x}, {p.y}</span>
+            <span key={i} className="spawn-chip mono">
+              {p.label ? `${p.label} · ` : ''}({p.x}, {p.y})
+            </span>
           ))}
         </div>
       </div>
@@ -200,7 +202,7 @@ function BreedingResult({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameD
                     <div className="souls">
                       {points.slice(0, 12).map((p, i) => (
                         <span key={i} className="spawn-chip mono">
-                          {p.label ? `${p.label} · ` : ''}{p.x}, {p.y}
+                          {p.label ? `${p.label} · ` : ''}({p.x}, {p.y})
                         </span>
                       ))}
                       {points.length > 12 && (
