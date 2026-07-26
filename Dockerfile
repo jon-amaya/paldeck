@@ -6,17 +6,25 @@
 FROM node:22-bookworm-slim AS frontend
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
 FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
 COPY --from=frontend /src/frontend/dist ./frontend/dist
-RUN CGO_ENABLED=0 go build -o /out/paldeck .
+# Cache mounts persist across builds independently of --no-cache (that flag
+# only disables *layer* reuse) — this is what makes a `--no-cache` rebuild
+# fast again: go.mod/go.sum-unchanged dependencies (wazero, the Docker SDK,
+# modernc.org/sqlite — notoriously slow to compile from nothing) stay warm
+# in /go/pkg/mod and /root/.cache/go-build, so only actually-changed
+# packages recompile.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -o /out/paldeck .
 
 FROM debian:bookworm-slim
 RUN apt-get update \
