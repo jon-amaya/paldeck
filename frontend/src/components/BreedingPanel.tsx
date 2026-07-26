@@ -19,10 +19,10 @@ function Species({ id, gd, owned }: { id: string; gd: PalGameData; owned?: boole
   )
 }
 
-// Given a target species, works out the fewest-breeding-steps way to get
-// it from what's currently in the world, using PalCalc's datamined combo
-// table (see breeding.ts). Anything the plan needs that you don't already
-// own gets listed with its wild spawn locations.
+// Given a target species, shows every known way to get it: a wild/boss catch
+// location if one exists, AND its breeding recipe if one exists — a species
+// having wild spawns doesn't mean breeding isn't the better option, so both
+// show rather than the calculator silently picking one for you.
 export function BreedingPanel({ id }: { id: string }) {
   const [pals, setPals] = useState<Pal[] | null>(null)
   const [gd, setGd] = useState<PalGameData | null>(null)
@@ -76,14 +76,33 @@ export function BreedingPanel({ id }: { id: string }) {
     )
   }, [options, targetQ])
 
-  // Discriminated result — 'owned' and 'no-path' both mean "no plan to
-  // show" but for different reasons, so they can't share the null sentinel.
-  type Result = { kind: 'owned' } | { kind: 'no-path' } | { kind: 'plan'; plan: BreedingPlan }
+  // Discriminated result — 'owned' and 'no-path' both mean "nothing to show"
+  // but for different reasons, so they can't share one null sentinel.
+  // 'options' can hold a catch plan, a breed plan, or both at once.
+  type Result =
+    | { kind: 'owned' }
+    | { kind: 'no-path' }
+    | { kind: 'options'; catchPlan: BreedingPlan | null; breedPlan: BreedingPlan | null }
   const result: Result | undefined = useMemo(() => {
     if (!target || !bd) return undefined
     if (owned.has(target.key)) return { kind: 'owned' }
-    const plan = computeBreedingPlan(bd, target.key, owned, catchable)
-    return plan ? { kind: 'plan', plan } : { kind: 'no-path' }
+
+    // The direct-catch route: only exists if the target itself is catchable.
+    const catchPlan = catchable.has(target.key)
+      ? computeBreedingPlan(bd, target.key, owned, catchable)
+      : null
+
+    // The breeding route: recompute with the target excluded from the
+    // catchable set, so "it's also catchable in the wild" can't shortcut
+    // the search into skipping breeding entirely — this is the only way to
+    // learn the actual recipe even for species you could also just go catch.
+    const catchableNoTarget = new Set(catchable)
+    catchableNoTarget.delete(target.key)
+    const breedPlanRaw = computeBreedingPlan(bd, target.key, owned, catchableNoTarget)
+    const breedPlan = breedPlanRaw && breedPlanRaw.steps.length > 0 ? breedPlanRaw : null
+
+    if (!catchPlan && !breedPlan) return { kind: 'no-path' }
+    return { kind: 'options', catchPlan, breedPlan }
   }, [target, bd, owned, catchable])
 
   if (err) return <div className="placeholder"><b>Couldn't load pals</b><p>{err}</p></div>
@@ -108,7 +127,7 @@ export function BreedingPanel({ id }: { id: string }) {
       {!target && (
         <div className="placeholder">
           <b>Pick a target</b>
-          <p>Search any species above — Paldeck checks what's already in the world and works out the shortest breeding path to it.</p>
+          <p>Search any species above — Paldeck checks what's already in the world, its wild/boss spawn locations, and its breeding recipe.</p>
         </div>
       )}
 
@@ -126,8 +145,19 @@ export function BreedingPanel({ id }: { id: string }) {
         </div>
       )}
 
-      {target && result?.kind === 'plan' && (
-        <BreedingResult plan={result.plan} gd={gd} target={target.name} owned={owned} />
+      {target && result?.kind === 'options' && (
+        <>
+          {result.catchPlan && <CatchDirectly plan={result.catchPlan} gd={gd} target={target.name} />}
+          {result.breedPlan && (
+            <BreedSteps
+              plan={result.breedPlan}
+              gd={gd}
+              target={target.name}
+              owned={owned}
+              heading={result.catchPlan ? 'Or breed it' : undefined}
+            />
+          )}
+        </>
       )}
     </>
   )
@@ -142,42 +172,54 @@ function catchLocationsOf(gd: PalGameData, id: string): SpawnPoint[] {
   return (gd.bossSpawns.get(id) ?? []).map((b) => ({ x: b.x, y: b.y, label: `boss · lvl ${b.lv}` }))
 }
 
-function BreedingResult({
+function LocationChips({ points }: { points: SpawnPoint[] }) {
+  return (
+    <div className="souls">
+      {points.slice(0, 12).map((p, i) => (
+        <span key={i} className="spawn-chip mono">
+          {p.label ? `${p.label} · ` : ''}({p.x}, {p.y})
+        </span>
+      ))}
+      {points.length > 12 && <span className="mut" style={{ fontSize: 12 }}>+{points.length - 12} more</span>}
+    </div>
+  )
+}
+
+function CatchDirectly({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameData; target: string }) {
+  const points = catchLocationsOf(gd, plan.target)
+  const isBoss = gd.spawns.get(plan.target)?.length === 0 || !gd.spawns.has(plan.target)
+  return (
+    <div className="placeholder" style={{ marginBottom: 16 }}>
+      <b>Catch it directly</b>
+      <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+        <Species id={plan.target} gd={gd} /> {isBoss ? 'is a boss encounter' : `spawns in the wild — no need to breed a ${target}`}
+      </p>
+      <div style={{ marginTop: 10, display: 'flex', justifyContent: 'center' }}>
+        <LocationChips points={points} />
+      </div>
+    </div>
+  )
+}
+
+function BreedSteps({
   plan,
   gd,
   target,
   owned,
+  heading,
 }: {
   plan: BreedingPlan
   gd: PalGameData
   target: string
   owned: Set<string>
+  heading?: string
 }) {
-  const catchLocations = (id: string) => catchLocationsOf(gd, id)
-
-  if (plan.steps.length === 0 && plan.catches.length === 1 && plan.catches[0] === plan.target) {
-    const points = catchLocations(plan.target)
-    const isBoss = gd.spawns.get(plan.target)?.length === 0 || !gd.spawns.has(plan.target)
-    return (
-      <div className="placeholder">
-        <b>No breeding needed</b>
-        <p style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-          <Species id={plan.target} gd={gd} /> {isBoss && points.length > 0 ? 'is a boss encounter' : 'spawns in the wild'} — catch it directly.
-        </p>
-        <div className="souls" style={{ justifyContent: 'center', marginTop: 10 }}>
-          {points.slice(0, 12).map((p, i) => (
-            <span key={i} className="spawn-chip mono">
-              {p.label ? `${p.label} · ` : ''}({p.x}, {p.y})
-            </span>
-          ))}
-        </div>
-      </div>
-    )
-  }
+  const catchLocations = (spid: string) => catchLocationsOf(gd, spid)
 
   return (
     <>
-      <p className="map-note" style={{ marginBottom: 10 }}>
+      {heading && <div className="pd-label">{heading}</div>}
+      <p className="map-note" style={{ marginBottom: 10, marginTop: heading ? 8 : 0 }}>
         {plan.steps.length} breeding step{plan.steps.length === 1 ? '' : 's'} to {target}
         {plan.catches.length > 0
           ? ` · ${plan.catches.length} pal${plan.catches.length === 1 ? '' : 's'} to catch first`
@@ -212,26 +254,17 @@ function BreedingResult({
         <>
           <div className="pd-label" style={{ marginTop: 20 }}>Catch these first</div>
           <div className="wsform">
-            {plan.catches.map((id) => {
-              const points = catchLocations(id)
+            {plan.catches.map((spid) => {
+              const points = catchLocations(spid)
               return (
-                <div className="formcard" key={id}>
+                <div className="formcard" key={spid}>
                   <div className="formcard-head">
-                    <Species id={id} gd={gd} />
+                    <Species id={spid} gd={gd} />
                   </div>
                   {points.length === 0 ? (
                     <p className="note">No known wild spawn or boss encounter — check the in-game map or an event.</p>
                   ) : (
-                    <div className="souls">
-                      {points.slice(0, 12).map((p, i) => (
-                        <span key={i} className="spawn-chip mono">
-                          {p.label ? `${p.label} · ` : ''}({p.x}, {p.y})
-                        </span>
-                      ))}
-                      {points.length > 12 && (
-                        <span className="mut" style={{ fontSize: 12 }}>+{points.length - 12} more</span>
-                      )}
-                    </div>
+                    <LocationChips points={points} />
                   )}
                 </div>
               )
