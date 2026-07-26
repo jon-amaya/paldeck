@@ -105,6 +105,17 @@ export const mapToPct = (x: number, y: number) => {
   }
 }
 
+// Inverse of mapToPct — screen % position (within .map-inner) back to map
+// coordinates, for the cursor-hover readout.
+export const pctToMapCoord = (leftPct: number, topPct: number) => {
+  const fy = leftPct / 100
+  const fx = 1 - topPct / 100
+  return {
+    x: Math.round(MAP_BOUNDS.minX + fx * (MAP_BOUNDS.maxX - MAP_BOUNDS.minX)),
+    y: Math.round(MAP_BOUNDS.minY + fy * (MAP_BOUNDS.maxY - MAP_BOUNDS.minY)),
+  }
+}
+
 // Save CharacterIDs carry variant prefixes: BOSS_ = alpha, etc.
 export function speciesKey(characterId: string): { key: string; alpha: boolean } {
   let id = characterId

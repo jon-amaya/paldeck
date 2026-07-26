@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PalPlayer } from '../types'
 import { api } from '../api'
-import { loadPalData, mapCoord, mapToPct, type PalGameData } from '../palData'
+import { loadPalData, mapCoord, mapToPct, pctToMapCoord, type PalGameData } from '../palData'
+import { drawHeatmap } from '../heatmap'
 
 // Live world map: the full map image with online players (polled) and, when a
 // species is picked, its wild spawn points. Pan by dragging, zoom with the
@@ -14,7 +15,10 @@ export function MapView({ id }: { id: string }) {
   const [showBosses, setShowBosses] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [fit, setFit] = useState(520) // px size of the map at 1× = fully visible
+  const [hover, setHover] = useState<{ left: number; top: number; clientX: number; clientY: number } | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
+  const heatRef = useRef<HTMLCanvasElement>(null)
   const drag = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
   const zoomRef = useRef(zoom)
   useEffect(() => {
@@ -84,11 +88,23 @@ export function MapView({ id }: { id: string }) {
   }
   const onPointerMove = (e: React.PointerEvent) => {
     const el = wrapRef.current
-    if (!el || !drag.current) return
-    el.scrollLeft = drag.current.sl - (e.clientX - drag.current.x)
-    el.scrollTop = drag.current.st - (e.clientY - drag.current.y)
+    if (el && drag.current) {
+      el.scrollLeft = drag.current.sl - (e.clientX - drag.current.x)
+      el.scrollTop = drag.current.st - (e.clientY - drag.current.y)
+    }
+    const inner = innerRef.current
+    if (!inner) return
+    const rect = inner.getBoundingClientRect()
+    const left = ((e.clientX - rect.left) / rect.width) * 100
+    const top = ((e.clientY - rect.top) / rect.height) * 100
+    if (left < 0 || left > 100 || top < 0 || top > 100) {
+      setHover(null)
+    } else {
+      setHover({ left, top, clientX: e.clientX, clientY: e.clientY })
+    }
   }
   const onPointerUp = () => (drag.current = null)
+  const onPointerLeave = () => setHover(null)
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault()
     const el = wrapRef.current
@@ -113,6 +129,25 @@ export function MapView({ id }: { id: string }) {
     el.scrollLeft = a.contentX * scale - a.cx
     el.scrollTop = a.contentY * scale - a.cy
   }, [zoom])
+
+  // Density heatmap for the selected species' spawn points, in the app's
+  // own accent color (whichever the user has picked in Settings) so it
+  // never introduces a second hue on top of the existing dot markers.
+  useEffect(() => {
+    const canvas = heatRef.current
+    if (!canvas) return
+    if (!selected || selected.points.length === 0) {
+      canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
+      return
+    }
+    const size = Math.round(fit * zoom)
+    const pxPoints = selected.points.map((s) => {
+      const pos = mapToPct(s.x, s.y)
+      return { x: (pos.left / 100) * size, y: (pos.top / 100) * size }
+    })
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--acc').trim() || '#e0447a'
+    drawHeatmap(canvas, pxPoints, size, accent)
+  }, [selected, fit, zoom])
 
   return (
     <>
@@ -161,10 +196,17 @@ export function MapView({ id }: { id: string }) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
         onWheel={onWheel}
       >
-        <div className="map-inner" style={{ width: `${fit * zoom}px` }}>
+        <div className="map-inner" ref={innerRef} style={{ width: `${fit * zoom}px` }}>
           <img className="map-img" src="/game-data/map.jpg" alt="Palworld world map" draggable={false} />
+          <canvas className="map-heat" ref={heatRef} />
+
+          <span className="compass compass-n">N</span>
+          <span className="compass compass-s">S</span>
+          <span className="compass compass-w">W</span>
+          <span className="compass compass-e">E</span>
 
           {showLandmarks &&
             gd?.landmarks.map((lm, i) => {
@@ -231,6 +273,20 @@ export function MapView({ id }: { id: string }) {
           })}
         </div>
       </div>
+
+      {hover &&
+        (() => {
+          const c = pctToMapCoord(hover.left, hover.top)
+          return (
+            <div
+              className="map-hover-coord mono"
+              style={{ left: hover.clientX + 14, top: hover.clientY + 14 }}
+            >
+              {c.x}, {c.y}
+            </div>
+          )
+        })()}
+
       <p className="map-note" style={{ marginTop: 8 }}>
         {players.length > 0
           ? `${players.length} player${players.length === 1 ? '' : 's'} online — markers update every 5s.`
