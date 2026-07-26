@@ -89,13 +89,21 @@ export const mapCoord = (worldX: number, worldY: number) => ({
 export const MAP_BOUNDS = { minX: -1922.44, maxX: 1233.99, minY: -2125.3, maxY: 1031.13 }
 
 // Map coords → percentage position on the map image (top-left origin).
-// The stored image is rotated 90° CCW in CSS to match the game's presentation
-// (Jon calibrated by eye against the in-game map), so the axes swap here:
-// map Y runs along the screen's horizontal, map X along the vertical.
-export const mapToPct = (x: number, y: number) => ({
-  left: ((y - MAP_BOUNDS.minY) / (MAP_BOUNDS.maxY - MAP_BOUNDS.minY)) * 100,
-  top: ((x - MAP_BOUNDS.minX) / (MAP_BOUNDS.maxX - MAP_BOUNDS.minX)) * 100,
-})
+// The stored image is rotated 90° CCW in CSS (.map-img) to match the game's
+// presentation, but that transform only repaints pixels — it doesn't rotate
+// the coordinate space markers are placed in (left/top %, relative to the
+// unrotated .map-inner box). A 90° rotation needs both an axis swap *and* a
+// mirror on one axis; only the swap was applied here before, which put every
+// marker in the wrong spot. For content at fractional position (fx, fy) in
+// the source image, a -90° (CCW) rotation places it on screen at (fy, 1-fx).
+export const mapToPct = (x: number, y: number) => {
+  const fx = (x - MAP_BOUNDS.minX) / (MAP_BOUNDS.maxX - MAP_BOUNDS.minX)
+  const fy = (y - MAP_BOUNDS.minY) / (MAP_BOUNDS.maxY - MAP_BOUNDS.minY)
+  return {
+    left: fy * 100,
+    top: (1 - fx) * 100,
+  }
+}
 
 // Save CharacterIDs carry variant prefixes: BOSS_ = alpha, etc.
 export function speciesKey(characterId: string): { key: string; alpha: boolean } {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PalPlayer } from '../types'
 import { api } from '../api'
 import { loadPalData, mapCoord, mapToPct, type PalGameData } from '../palData'
@@ -16,6 +16,16 @@ export function MapView({ id }: { id: string }) {
   const [fit, setFit] = useState(520) // px size of the map at 1× = fully visible
   const wrapRef = useRef<HTMLDivElement>(null)
   const drag = useRef<{ x: number; y: number; sl: number; st: number } | null>(null)
+  const zoomRef = useRef(zoom)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+  // Set by onWheel just before a zoom change, consumed by the layout effect
+  // right after — keeps the map point under the cursor fixed instead of
+  // zooming around whatever the scroll position happened to be.
+  const zoomAnchor = useRef<{ cx: number; cy: number; contentX: number; contentY: number; oldZoom: number } | null>(
+    null,
+  )
 
   // 1× means "the whole (square) map fits in the panel"; zoom scales up from there.
   useEffect(() => {
@@ -81,8 +91,28 @@ export function MapView({ id }: { id: string }) {
   const onPointerUp = () => (drag.current = null)
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault()
-    setZoom((z) => Math.min(8, Math.max(1, z + (e.deltaY < 0 ? 0.5 : -0.5))))
+    const el = wrapRef.current
+    if (!el) return
+    const oldZoom = zoomRef.current
+    const newZoom = Math.min(8, Math.max(1, oldZoom + (e.deltaY < 0 ? 0.5 : -0.5)))
+    if (newZoom === oldZoom) return
+    const rect = el.getBoundingClientRect()
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+    zoomAnchor.current = { cx, cy, contentX: el.scrollLeft + cx, contentY: el.scrollTop + cy, oldZoom }
+    setZoom(newZoom)
   }
+  // Runs after .map-inner's width has updated for the new zoom, before paint
+  // — rescales the anchored content point and re-centers it under the cursor.
+  useLayoutEffect(() => {
+    const el = wrapRef.current
+    const a = zoomAnchor.current
+    if (!el || !a) return
+    zoomAnchor.current = null
+    const scale = zoom / a.oldZoom
+    el.scrollLeft = a.contentX * scale - a.cx
+    el.scrollTop = a.contentY * scale - a.cy
+  }, [zoom])
 
   return (
     <>
@@ -195,6 +225,7 @@ export function MapView({ id }: { id: string }) {
               >
                 <i />
                 <b>{p.name}</b>
+                <small className="mk-player-coord mono">{mc.x}, {mc.y}</small>
               </span>
             )
           })}
