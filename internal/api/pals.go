@@ -55,9 +55,22 @@ func (a *api) pals(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "reading world save: "+err.Error())
 		return
 	}
-	raw, err := palsave.Decompress(ctx, sav)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "decompress: "+err.Error())
+	raw, decErr := palsave.Decompress(ctx, sav)
+	for attempt := 0; decErr != nil && attempt < 2; attempt++ {
+		// CopyFromContainer streams whatever bytes are on disk with no
+		// coordination with Palworld's own writer — reading mid-autosave
+		// tears the compressed stream (valid header, incomplete payload),
+		// which the WASM decompressor sees as corrupt input. The write
+		// finishes within a second or two, so a fresh copy self-corrects.
+		time.Sleep(time.Second)
+		if sav, err = a.dk.ReadWorldLevelSav(ctx, sv.ContainerID); err != nil {
+			writeErr(w, http.StatusBadGateway, "reading world save: "+err.Error())
+			return
+		}
+		raw, decErr = palsave.Decompress(ctx, sav)
+	}
+	if decErr != nil {
+		writeErr(w, http.StatusInternalServerError, "decompress: "+decErr.Error())
 		return
 	}
 	pals, err := palsave.ExtractPals(ctx, raw)
