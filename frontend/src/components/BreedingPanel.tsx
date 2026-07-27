@@ -256,25 +256,36 @@ export function BreedingPanel({ id }: { id: string }) {
     )
   }, [options, targetQ])
 
+  // catchId and plan are computed independently — a target being catchable
+  // never hides its breeding options, same as any leaf parent further down
+  // a chain (BreedInstead). Regressed once already when the panel was
+  // rewritten around the numbered-chain layout; kept explicit this time.
   type Result =
     | { kind: 'owned' }
     | { kind: 'no-path' }
-    | { kind: 'catch'; id: string }
-    | { kind: 'breed'; plan: BreedingPlan; altCount: number }
+    | { kind: 'found'; catchId: string | null; plan: BreedingPlan | null; altCount: number }
   const result: Result | undefined = useMemo(() => {
     if (!target || !bd) return undefined
     if (owned.has(target.key)) return { kind: 'owned' }
-    if (catchable.has(target.key)) return { kind: 'catch', id: target.key }
 
-    const plan = computeBreedingPlan(bd, target.key, owned, catchable)
-    if (!plan) return { kind: 'no-path' }
-    const altCount = computeAllParentOptions(bd, target.key, owned, catchable).length
-    return { kind: 'breed', plan, altCount }
+    const catchId = catchable.has(target.key) ? target.key : null
+
+    // Excluded from catchable so a catchable target can't shortcut the
+    // breeding search into finding nothing.
+    const catchableNoTarget = new Set(catchable)
+    catchableNoTarget.delete(target.key)
+    const plan = computeBreedingPlan(bd, target.key, owned, catchableNoTarget)
+    const altCount = plan ? computeAllParentOptions(bd, target.key, owned, catchableNoTarget).length : 0
+
+    if (!catchId && !plan) return { kind: 'no-path' }
+    return { kind: 'found', catchId, plan, altCount }
   }, [target, bd, owned, catchable])
 
   const allOptions = useMemo(() => {
-    if (!bd || !target || result?.kind !== 'breed') return []
-    return computeAllParentOptions(bd, target.key, owned, catchable)
+    if (!bd || !target || result?.kind !== 'found' || !result.plan) return []
+    const catchableNoTarget = new Set(catchable)
+    catchableNoTarget.delete(target.key)
+    return computeAllParentOptions(bd, target.key, owned, catchableNoTarget)
   }, [bd, target, result, owned, catchable])
 
   if (err) return <div className="placeholder"><b>Couldn't load pals</b><p>{err}</p></div>
@@ -325,14 +336,14 @@ export function BreedingPanel({ id }: { id: string }) {
         </div>
       )}
 
-      {pals && gd && bd && target && result?.kind === 'catch' && (
-        <CatchDirectly id={result.id} gd={gd} target={target.name} />
+      {pals && gd && bd && target && result?.kind === 'found' && result.catchId && (
+        <CatchDirectly id={result.catchId} gd={gd} target={target.name} />
       )}
 
-      {pals && gd && bd && target && result?.kind === 'breed' && (
+      {pals && gd && bd && target && result?.kind === 'found' && result.plan && (
         <>
           <div className="headline-row" style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
-            <b>Fastest path to {target.name}</b>
+            <b>{result.catchId ? 'Or breed it' : `Fastest path to ${target.name}`}</b>
             <span className="mut" style={{ fontSize: 12.5 }}>
               {result.plan.steps.length} step{result.plan.steps.length === 1 ? '' : 's'}
               {result.plan.catches.length > 0 && ` · ${result.plan.catches.length} to catch`}
