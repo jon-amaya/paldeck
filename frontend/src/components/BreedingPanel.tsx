@@ -51,73 +51,13 @@ function BPal({ id, gd, status, result }: { id: string; gd: PalGameData; status?
   )
 }
 
-// A catchable-but-unowned parent can sometimes also be bred from what's
-// already on hand — collapsed by default so the primary path stays a clean
-// numbered line, expandable per-row rather than shown for everything at
-// once (that's what made the previous version confusing).
-function BreedInstead({
-  id,
-  gd,
-  bd,
-  owned,
-  catchable,
-}: {
-  id: string
-  gd: PalGameData
-  bd: BreedingData
-  owned: Set<string>
-  catchable: Set<string>
-}) {
-  const [open, setOpen] = useState(false)
-  const catchableWithoutSelf = useMemo(() => {
-    const s = new Set(catchable)
-    s.delete(id)
-    return s
-  }, [catchable, id])
-  const opts = useMemo(
-    () => computeAllParentOptions(bd, id, owned, catchableWithoutSelf),
-    [bd, id, owned, catchableWithoutSelf],
-  )
-  if (opts.length === 0) return null
-  const best = opts[0]
-  const statusOf = (sid: string) => (owned.has(sid) ? 'owned' : catchableWithoutSelf.has(sid) ? 'catch' : undefined)
-
-  return (
-    <div className="balt-box">
-      <button className="balt-toggle" onClick={() => setOpen((o) => !o)}>
-        {open
-          ? 'hide'
-          : `or breed it — ${opts.length} way${opts.length === 1 ? '' : 's'}, cheapest ${best.totalSteps} step${best.totalSteps === 1 ? '' : 's'} ›`}
-      </button>
-      {open && (
-        <div style={{ marginTop: 8 }}>
-          <div className="bstep" style={{ background: 'var(--panel)', marginBottom: 6 }}>
-            <BPal id={best.a} gd={gd} status={statusOf(best.a)} />
-            <span className="bx">×</span>
-            <BPal id={best.b} gd={gd} status={statusOf(best.b)} />
-            <span className="beq">=</span>
-            <BPal id={id} gd={gd} result />
-          </div>
-          {best.aPlan && (
-            <p className="note" style={{ fontSize: 11.5, marginBottom: 3 }}>
-              {gd.species.get(best.a)?.name ?? best.a} needs {best.aPlan.steps.length} more step{best.aPlan.steps.length === 1 ? '' : 's'} of its own.
-            </p>
-          )}
-          {best.bPlan && (
-            <p className="note" style={{ fontSize: 11.5 }}>
-              {gd.species.get(best.b)?.name ?? best.b} needs {best.bPlan.steps.length} more step{best.bPlan.steps.length === 1 ? '' : 's'} of its own.
-            </p>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// The primary numbered path: one row per breeding step, top to bottom in
-// the order you'd actually do them. Each row's result reappears as a plain
-// parent in the next row once it exists — same pal, not a new fact.
-function FastestPath({
+// Numbered rows for one plan — shared by the primary path and every nested
+// "or breed it instead" expansion, so a parent that itself needs breeding
+// shows its FULL chain (however many levels deep), not just one immediate
+// cross with a one-line "needs N more steps" note. Recursion happens
+// naturally: each catchable leaf gets its own BreedInstead, which — if
+// expanded — renders another PlanSteps for whatever it resolves to.
+function PlanSteps({
   plan,
   gd,
   bd,
@@ -165,6 +105,87 @@ function FastestPath({
           </div>
         )
       })}
+    </>
+  )
+}
+
+// A catchable-but-unowned parent can sometimes also be bred from what's
+// already on hand — collapsed by default so the primary path stays a clean
+// numbered line, expandable per-row rather than shown for everything at
+// once (that's what made the previous version confusing). Expanding shows
+// the cheapest option's FULL chain via PlanSteps — recursively, if either
+// of ITS parents also needs breeding rather than a dead-end summary line.
+function BreedInstead({
+  id,
+  gd,
+  bd,
+  owned,
+  catchable,
+}: {
+  id: string
+  gd: PalGameData
+  bd: BreedingData
+  owned: Set<string>
+  catchable: Set<string>
+}) {
+  const [open, setOpen] = useState(false)
+  const catchableWithoutSelf = useMemo(() => {
+    const s = new Set(catchable)
+    s.delete(id)
+    return s
+  }, [catchable, id])
+  const opts = useMemo(
+    () => computeAllParentOptions(bd, id, owned, catchableWithoutSelf),
+    [bd, id, owned, catchableWithoutSelf],
+  )
+  if (opts.length === 0) return null
+  const best = opts[0]
+
+  // best.aPlan/bPlan are already the FULL recursive plan for that parent
+  // (computeAllParentOptions reuses the same solved graph computeBreedingPlan
+  // does) — build one combined plan for this cross so PlanSteps can render
+  // every level in one numbered sequence, ending at `id`.
+  const combinedPlan: BreedingPlan = useMemo(() => {
+    const steps = [...(best.aPlan?.steps ?? []), ...(best.bPlan?.steps ?? []), { a: best.a, b: best.b, child: id }]
+    const catches = [...(best.aPlan?.catches ?? []), ...(best.bPlan?.catches ?? [])]
+    return { target: id, steps, catches }
+  }, [best, id])
+
+  return (
+    <div className="balt-box">
+      <button className="balt-toggle" onClick={() => setOpen((o) => !o)}>
+        {open
+          ? 'hide'
+          : `or breed it — ${opts.length} way${opts.length === 1 ? '' : 's'}, cheapest ${best.totalSteps} step${best.totalSteps === 1 ? '' : 's'} ›`}
+      </button>
+      {open && (
+        <div style={{ marginTop: 8 }}>
+          <PlanSteps plan={combinedPlan} gd={gd} bd={bd} owned={owned} catchable={catchableWithoutSelf} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The primary numbered path: one row per breeding step, top to bottom in
+// the order you'd actually do them. Each row's result reappears as a plain
+// parent in the next row once it exists — same pal, not a new fact.
+function FastestPath({
+  plan,
+  gd,
+  bd,
+  owned,
+  catchable,
+}: {
+  plan: BreedingPlan
+  gd: PalGameData
+  bd: BreedingData
+  owned: Set<string>
+  catchable: Set<string>
+}) {
+  return (
+    <>
+      <PlanSteps plan={plan} gd={gd} bd={bd} owned={owned} catchable={catchable} />
       <div className="breach">
         <span>✓</span> Target reached
       </div>
