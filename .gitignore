@@ -11,3 +11,7 @@
 .DS_Store
 .vscode/
 .idea/
+
+# internal dev-process docs (spec-driven workflow log) — kept local only
+/docs/
+/specs/

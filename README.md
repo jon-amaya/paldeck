@@ -74,13 +74,7 @@ Config via env: `PALDECK_ADDR` (default `:8080`), `PALDECK_DB` (default
 | DELETE | `/api/servers/{id}` | remove the container (world volume kept) |
 | GET | `/api/servers/{id}/logs` | **WebSocket** — live log stream (ANSI + RFC3339 timestamps) |
 
-## Project docs
-
-Spec-driven: `docs/CONSTITUTION.md` (rules & locked stack), `docs/ROADMAP.md`
-(phases), `specs/<nnn>-*/` (spec / plan / tasks per feature). Specs 001–002
-(core + console) are complete and stress-tested.
-
-## Next (see ROADMAP)
+## Next
 
 - **003 — operator controls:** broadcast, scheduled restarts, update-on-demand,
   live metrics (players/CPU/memory via Palworld REST API + Docker stats),

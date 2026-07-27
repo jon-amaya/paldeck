@@ -137,7 +137,7 @@ export function NewServerModal({
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. torta-slayers"
+                placeholder="e.g. my-palworld-server"
                 autoFocus
               />
             </label>
