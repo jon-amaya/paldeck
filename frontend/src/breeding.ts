@@ -33,22 +33,37 @@ export interface BreedingPlan {
   catches: string[] // species you don't currently own that the plan needs — go catch these
 }
 
-// Fewest-breeding-steps way to obtain `target`. Owned species are free
-// (zero-step) parents; catchable species (have wild spawns) are also free
-// to use as parents but get listed under `catches` since you don't have one
-// yet. Ties are broken toward plans that reuse more of what you already
-// own, so it never suggests catching something you don't need to.
-export function computeBreedingPlan(
-  data: BreedingData,
-  target: string,
-  owned: Set<string>,
-  catchable: Set<string>,
-): BreedingPlan | null {
+// One valid way to breed `target`: a specific parent pair, plus (for
+// whichever parent isn't already owned or catchable) the plan to obtain it.
+// A species can have dozens or hundreds of valid pairs — this is one of
+// them, not necessarily involving the cheapest sub-plans on both sides
+// individually, but the pair itself is real breeding-table data either way.
+export interface ParentOption {
+  a: string
+  b: string
+  aPlan: BreedingPlan | null // null = a is already owned or catchable, no breeding needed
+  bPlan: BreedingPlan | null
+  totalSteps: number // aPlan's steps + bPlan's steps + 1 for this pair's own cross
+}
+
+// The solved graph: for every species, the fewest-steps way to obtain it
+// (cost), and which two species combine to produce it that way (parentA/B,
+// -1 for a leaf). Expensive part of the algorithm — computed once and
+// reused for reconstructing as many different species' plans as needed,
+// since redoing this per-parent for a target with hundreds of valid pairs
+// (Anubis has 467) would multiply the cost hundreds of times over.
+interface Solved {
+  species: string[]
+  idx: Map<string, number>
+  cost: number[]
+  parentA: number[]
+  parentB: number[]
+}
+
+function solve(data: BreedingData, owned: Set<string>, catchable: Set<string>): Solved {
   const { species, combos } = data
   const n = species.length
   const idx = new Map(species.map((s, i) => [s, i]))
-  const targetIdx = idx.get(target)
-  if (targetIdx == null) return null
 
   const cost = new Array<number>(n).fill(Infinity)
   const newCatchCount = new Array<number>(n).fill(Infinity)
@@ -100,10 +115,15 @@ export function computeBreedingPlan(
     }
   }
 
-  if (cost[targetIdx] === Infinity) return null
+  return { species, idx, cost, parentA, parentB }
+}
 
-  // Reconstruct into an ordered step list (parents before the step that
-  // uses them); a shared intermediate needed twice is only bred once.
+// Reconstructs the fewest-steps plan for one species from an already-solved
+// graph — ordered so each step's parents are already available; a shared
+// intermediate needed twice is only bred once.
+function reconstruct(solved: Solved, targetIdx: number, owned: Set<string>): BreedingPlan | null {
+  if (solved.cost[targetIdx] === Infinity) return null
+  const { species, parentA, parentB } = solved
   const steps: BreedStep[] = []
   const have = new Set<string>(owned)
   const catches = new Set<string>()
@@ -123,5 +143,61 @@ export function computeBreedingPlan(
   }
   visit(targetIdx)
 
-  return { target, steps, catches: [...catches] }
+  return { target: species[targetIdx], steps, catches: [...catches] }
+}
+
+// Fewest-breeding-steps way to obtain `target`. Owned species are free
+// (zero-step) parents; catchable species (have wild spawns) are also free
+// to use as parents but get listed under `catches` since you don't have one
+// yet. Ties are broken toward plans that reuse more of what you already
+// own, so it never suggests catching something you don't need to.
+export function computeBreedingPlan(
+  data: BreedingData,
+  target: string,
+  owned: Set<string>,
+  catchable: Set<string>,
+): BreedingPlan | null {
+  const solved = solve(data, owned, catchable)
+  const targetIdx = solved.idx.get(target)
+  if (targetIdx == null) return null
+  return reconstruct(solved, targetIdx, owned)
+}
+
+// Every valid parent pair for `target` in the breeding table (not just the
+// single cheapest one) — community breeding calculators show this, and a
+// specific pair might be preferable for reasons the step-count alone
+// doesn't capture (a favorite pal, a passive you're farming for). Each
+// option carries the plan needed for whichever parent isn't already owned
+// or catchable, so "how many steps to reach the parents themselves" is
+// answered per-option, not just for the one plan computeBreedingPlan picks.
+// Sorted fewest-total-steps first.
+export function computeAllParentOptions(
+  data: BreedingData,
+  target: string,
+  owned: Set<string>,
+  catchable: Set<string>,
+): ParentOption[] {
+  const solved = solve(data, owned, catchable)
+  const targetIdx = solved.idx.get(target)
+  if (targetIdx == null) return []
+
+  const planFor = (i: number): BreedingPlan | null => {
+    const sid = solved.species[i]
+    if (owned.has(sid) || catchable.has(sid)) return null
+    return reconstruct(solved, i, owned)
+  }
+
+  const options: ParentOption[] = []
+  for (let i = 0; i < solved.species.length; i++) {
+    for (let j = i; j < solved.species.length; j++) {
+      if (data.combos[i][j] !== target) continue
+      if (i === targetIdx && j === targetIdx) continue // self x self — not a real breeding option
+      const aPlan = planFor(i)
+      const bPlan = planFor(j)
+      const totalSteps = (aPlan?.steps.length ?? 0) + (bPlan?.steps.length ?? 0) + 1
+      options.push({ a: solved.species[i], b: solved.species[j], aPlan, bPlan, totalSteps })
+    }
+  }
+  options.sort((x, y) => x.totalSteps - y.totalSteps)
+  return options
 }

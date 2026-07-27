@@ -2,12 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Pal } from '../types'
 import { api } from '../api'
 import { loadPalData, speciesKey, type PalGameData } from '../palData'
-import { loadBreedingData, computeBreedingPlan, type BreedingData, type BreedingPlan } from '../breeding'
+import {
+  loadBreedingData,
+  computeBreedingPlan,
+  computeAllParentOptions,
+  type BreedingData,
+  type BreedingPlan,
+  type ParentOption,
+} from '../breeding'
 
 // Species chip: icon + display name, used for both parents and the child in
 // each breeding step — same visual language as PalsPanel's pal-cell. Marks
-// parents you already own so the path is legible at a glance: which of the
-// two chips in a "A x B -> C" row you can breed right now versus still need.
+// parents you already own so the path is legible at a glance.
 function Species({ id, gd, owned }: { id: string; gd: PalGameData; owned?: boolean }) {
   const info = gd.species.get(id)
   return (
@@ -19,16 +25,19 @@ function Species({ id, gd, owned }: { id: string; gd: PalGameData; owned?: boole
   )
 }
 
+const DEFAULT_SHOWN = 15
+
 // Given a target species, shows every known way to get it: a wild/boss catch
-// location if one exists, AND its breeding recipe if one exists — a species
-// having wild spawns doesn't mean breeding isn't the better option, so both
-// show rather than the calculator silently picking one for you.
+// location if one exists, AND every valid breeding parent pair (not just
+// the cheapest), each annotated with how many extra steps are needed to
+// reach whichever parent you don't already own or can't just go catch.
 export function BreedingPanel({ id }: { id: string }) {
   const [pals, setPals] = useState<Pal[] | null>(null)
   const [gd, setGd] = useState<PalGameData | null>(null)
   const [bd, setBd] = useState<BreedingData | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [targetQ, setTargetQ] = useState('')
+  const [showAll, setShowAll] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -39,6 +48,8 @@ export function BreedingPanel({ id }: { id: string }) {
       live = false
     }
   }, [id])
+
+  useEffect(() => setShowAll(false), [targetQ])
 
   const owned = useMemo(() => {
     const s = new Set<string>()
@@ -76,33 +87,26 @@ export function BreedingPanel({ id }: { id: string }) {
     )
   }, [options, targetQ])
 
-  // Discriminated result — 'owned' and 'no-path' both mean "nothing to show"
-  // but for different reasons, so they can't share one null sentinel.
-  // 'options' can hold a catch plan, a breed plan, or both at once.
   type Result =
     | { kind: 'owned' }
     | { kind: 'no-path' }
-    | { kind: 'options'; catchPlan: BreedingPlan | null; breedPlan: BreedingPlan | null }
+    | { kind: 'options'; catchPlan: BreedingPlan | null; parentOptions: ParentOption[] }
   const result: Result | undefined = useMemo(() => {
     if (!target || !bd) return undefined
     if (owned.has(target.key)) return { kind: 'owned' }
 
-    // The direct-catch route: only exists if the target itself is catchable.
     const catchPlan = catchable.has(target.key)
       ? computeBreedingPlan(bd, target.key, owned, catchable)
       : null
 
-    // The breeding route: recompute with the target excluded from the
-    // catchable set, so "it's also catchable in the wild" can't shortcut
-    // the search into skipping breeding entirely — this is the only way to
-    // learn the actual recipe even for species you could also just go catch.
+    // Excluded from catchable so "it's also catchable" can't shortcut the
+    // search into skipping the parent list entirely.
     const catchableNoTarget = new Set(catchable)
     catchableNoTarget.delete(target.key)
-    const breedPlanRaw = computeBreedingPlan(bd, target.key, owned, catchableNoTarget)
-    const breedPlan = breedPlanRaw && breedPlanRaw.steps.length > 0 ? breedPlanRaw : null
+    const parentOptions = computeAllParentOptions(bd, target.key, owned, catchableNoTarget)
 
-    if (!catchPlan && !breedPlan) return { kind: 'no-path' }
-    return { kind: 'options', catchPlan, breedPlan }
+    if (!catchPlan && parentOptions.length === 0) return { kind: 'no-path' }
+    return { kind: 'options', catchPlan, parentOptions }
   }, [target, bd, owned, catchable])
 
   if (err) return <div className="placeholder"><b>Couldn't load pals</b><p>{err}</p></div>
@@ -127,7 +131,7 @@ export function BreedingPanel({ id }: { id: string }) {
       {!target && (
         <div className="placeholder">
           <b>Pick a target</b>
-          <p>Search any species above — Paldeck checks what's already in the world, its wild/boss spawn locations, and its breeding recipe.</p>
+          <p>Search any species above — Paldeck checks what's already in the world, its wild/boss spawn locations, and every known breeding recipe for it.</p>
         </div>
       )}
 
@@ -148,13 +152,16 @@ export function BreedingPanel({ id }: { id: string }) {
       {target && result?.kind === 'options' && (
         <>
           {result.catchPlan && <CatchDirectly plan={result.catchPlan} gd={gd} target={target.name} />}
-          {result.breedPlan && (
-            <BreedSteps
-              plan={result.breedPlan}
+          {result.parentOptions.length > 0 && (
+            <ParentOptions
+              opts={result.parentOptions}
               gd={gd}
-              target={target.name}
               owned={owned}
-              heading={result.catchPlan ? 'Or breed it' : undefined}
+              catchable={catchable}
+              target={target.name}
+              heading={result.catchPlan ? 'Or breed it' : 'Breed it'}
+              showAll={showAll}
+              onShowAll={() => setShowAll(true)}
             />
           )}
         </>
@@ -201,76 +208,133 @@ function CatchDirectly({ plan, gd, target }: { plan: BreedingPlan; gd: PalGameDa
   )
 }
 
-function BreedSteps({
-  plan,
+// One parent that isn't already owned: catchable (a plain location note),
+// needs its own breeding chain (plan present), or — rare, but a required
+// parent can genuinely have neither — nowhere known to get it at all. A
+// null plan is ambiguous between "catchable" and "truly stuck" on its own
+// (computeAllParentOptions returns null for both), so catchable is checked
+// explicitly rather than inferred from the plan's absence.
+function ParentNeed({
+  id,
   gd,
-  target,
   owned,
-  heading,
+  catchable,
+  plan,
 }: {
-  plan: BreedingPlan
+  id: string
   gd: PalGameData
-  target: string
   owned: Set<string>
-  heading?: string
+  catchable: Set<string>
+  plan: BreedingPlan | null
 }) {
-  const catchLocations = (spid: string) => catchLocationsOf(gd, spid)
+  if (!plan) {
+    if (catchable.has(id)) {
+      return (
+        <div style={{ marginTop: 6 }}>
+          <LocationChips points={catchLocationsOf(gd, id)} />
+        </div>
+      )
+    }
+    return (
+      <p className="note" style={{ marginTop: 6 }}>
+        No known wild spawn, boss encounter, or breeding combo for {gd.species.get(id)?.name ?? id}.
+      </p>
+    )
+  }
+  return (
+    <div style={{ marginTop: 8, paddingLeft: 12, borderLeft: '2px solid var(--line)' }}>
+      <p className="note" style={{ marginBottom: 6 }}>
+        {gd.species.get(id)?.name ?? id} needs {plan.steps.length} more step{plan.steps.length === 1 ? '' : 's'}:
+      </p>
+      {plan.steps.map((step, i) => {
+        const producedSoFar = plan.steps.slice(0, i).map((s) => s.child)
+        const has = (sid: string) => owned.has(sid) || producedSoFar.includes(sid)
+        return (
+          <div key={i} className="field-row" style={{ alignItems: 'center', marginBottom: 4 }}>
+            <Species id={step.a} gd={gd} owned={has(step.a)} />
+            <span className="mut">×</span>
+            <Species id={step.b} gd={gd} owned={has(step.b)} />
+            <span className="mut">→</span>
+            <Species id={step.child} gd={gd} />
+          </div>
+        )
+      })}
+      {plan.catches.map((cid) => (
+        <div key={cid} style={{ marginTop: 4 }}>
+          <Species id={cid} gd={gd} />
+          <LocationChips points={catchLocationsOf(gd, cid)} />
+        </div>
+      ))}
+    </div>
+  )
+}
 
+function ParentOptionCard({
+  opt,
+  gd,
+  owned,
+  catchable,
+  target,
+}: {
+  opt: ParentOption
+  gd: PalGameData
+  owned: Set<string>
+  catchable: Set<string>
+  target: string
+}) {
+  return (
+    <div className="formcard">
+      <div className="formcard-head">
+        <b>{opt.totalSteps} step{opt.totalSteps === 1 ? '' : 's'} total</b>
+      </div>
+      <div className="field-row" style={{ alignItems: 'center' }}>
+        <Species id={opt.a} gd={gd} owned={owned.has(opt.a)} />
+        <span className="mut">×</span>
+        <Species id={opt.b} gd={gd} owned={owned.has(opt.b)} />
+        <span className="mut">→</span>
+        <span className="pal-cell">{target}</span>
+      </div>
+      {!owned.has(opt.a) && <ParentNeed id={opt.a} gd={gd} owned={owned} catchable={catchable} plan={opt.aPlan} />}
+      {!owned.has(opt.b) && <ParentNeed id={opt.b} gd={gd} owned={owned} catchable={catchable} plan={opt.bPlan} />}
+    </div>
+  )
+}
+
+function ParentOptions({
+  opts,
+  gd,
+  owned,
+  catchable,
+  target,
+  heading,
+  showAll,
+  onShowAll,
+}: {
+  opts: ParentOption[]
+  gd: PalGameData
+  owned: Set<string>
+  catchable: Set<string>
+  target: string
+  heading: string
+  showAll: boolean
+  onShowAll: () => void
+}) {
+  const shown = showAll ? opts : opts.slice(0, DEFAULT_SHOWN)
   return (
     <>
-      {heading && <div className="pd-label">{heading}</div>}
-      <p className="map-note" style={{ marginBottom: 10, marginTop: heading ? 8 : 0 }}>
-        {plan.steps.length} breeding step{plan.steps.length === 1 ? '' : 's'} to {target}
-        {plan.catches.length > 0
-          ? ` · ${plan.catches.length} pal${plan.catches.length === 1 ? '' : 's'} to catch first`
-          : ' · you already have everything this needs'}
+      <div className="pd-label">{heading}</div>
+      <p className="map-note" style={{ marginBottom: 10, marginTop: 8 }}>
+        {opts.length} known parent combination{opts.length === 1 ? '' : 's'} — cheapest first
       </p>
-
       <div className="wsform">
-        {plan.steps.map((step, i) => {
-          // A step's child becomes available for the *next* step once bred
-          // here, so it counts as "have it" for anything downstream even
-          // before this plan is actually carried out.
-          const producedSoFar = plan.steps.slice(0, i).map((s) => s.child)
-          const has = (sid: string) => owned.has(sid) || producedSoFar.includes(sid)
-          return (
-            <div className="formcard" key={i}>
-              <div className="formcard-head">
-                <b>Step {i + 1}</b>
-              </div>
-              <div className="field-row" style={{ alignItems: 'center' }}>
-                <Species id={step.a} gd={gd} owned={has(step.a)} />
-                <span className="mut">×</span>
-                <Species id={step.b} gd={gd} owned={has(step.b)} />
-                <span className="mut">→</span>
-                <Species id={step.child} gd={gd} />
-              </div>
-            </div>
-          )
-        })}
+        {shown.map((opt, i) => (
+          <ParentOptionCard key={`${opt.a}-${opt.b}-${i}`} opt={opt} gd={gd} owned={owned} catchable={catchable} target={target} />
+        ))}
       </div>
-
-      {plan.catches.length > 0 && (
-        <>
-          <div className="pd-label" style={{ marginTop: 20 }}>Catch these first</div>
-          <div className="wsform">
-            {plan.catches.map((spid) => {
-              const points = catchLocations(spid)
-              return (
-                <div className="formcard" key={spid}>
-                  <div className="formcard-head">
-                    <Species id={spid} gd={gd} />
-                  </div>
-                  {points.length === 0 ? (
-                    <p className="note">No known wild spawn or boss encounter — check the in-game map or an event.</p>
-                  ) : (
-                    <LocationChips points={points} />
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </>
+      {!showAll && opts.length > DEFAULT_SHOWN && (
+        <button style={{ marginTop: 10 }} onClick={onShowAll}>
+          Show all {opts.length} combinations
+        </button>
       )}
     </>
   )
