@@ -90,10 +90,11 @@ export interface Backup {
 }
 
 // GET /api/host/stats — resources across the whole Docker host, not any one
-// server. Memory/disk are real host-wide figures; network is the sum of
+// server. CPU/memory/disk are real host-wide figures; network is the sum of
 // Paldeck-managed containers' own traffic (a containerized panel can't see
 // the host's real NICs without extra mounts it doesn't ask for).
 export interface HostStats {
+  cpuPercent: number
   memTotal: number
   memAvailable: number
   memUsed: number

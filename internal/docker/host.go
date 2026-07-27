@@ -18,17 +18,18 @@ import (
 // HostStats is a point-in-time reading of resources across the whole Docker
 // host, not any single server — backs the dashboard's overview tiles.
 //
-// Memory comes from /proc/meminfo, which reflects the real host even read
-// from inside a container: unlike network and PID namespaces, Linux doesn't
-// virtualize /proc/meminfo per mount namespace, so a containerized Paldeck
-// sees genuine host-wide figures with no extra bind mounts needed. Disk is
-// a statfs on diskPath (the directory holding paldeck.db) — in production
-// that's the bind-mounted data volume, so it reports the real underlying
-// host filesystem. Network can't use the same trick (network namespaces
-// ARE virtualized), so it's the sum of Paldeck-managed containers' own
-// veth counters instead — real traffic, just scoped to Palworld servers
-// rather than the whole host's NICs.
+// Memory and CPU come from /proc/meminfo and /proc/stat, which reflect the
+// real host even read from inside a container: unlike network and PID
+// namespaces, Linux doesn't virtualize these per mount namespace, so a
+// containerized Paldeck sees genuine host-wide figures with no extra bind
+// mounts needed. Disk is a statfs on diskPath (the directory holding
+// paldeck.db) — in production that's the bind-mounted data volume, so it
+// reports the real underlying host filesystem. Network can't use the same
+// trick (network namespaces ARE virtualized), so it's the sum of
+// Paldeck-managed containers' own veth counters instead — real traffic,
+// just scoped to Palworld servers rather than the whole host's NICs.
 type HostStats struct {
+	CPUPercent       float64 `json:"cpuPercent"`
 	MemTotal         uint64  `json:"memTotal"`
 	MemAvailable     uint64  `json:"memAvailable"`
 	MemUsed          uint64  `json:"memUsed"`
@@ -46,6 +47,10 @@ type HostStats struct {
 // returning on its own.
 func (d *Docker) HostStats(ctx context.Context, diskPath string) HostStats {
 	var out HostStats
+
+	if idle, total, err := readCPUTotals(); err == nil {
+		out.CPUPercent = d.cpuPrev.percent(idle, total)
+	}
 
 	if total, avail, err := readMeminfo(); err == nil {
 		out.MemTotal, out.MemAvailable = total, avail
@@ -65,6 +70,71 @@ func (d *Docker) HostStats(ctx context.Context, diskPath string) HostStats {
 	out.NetRxBytesPerSec, out.NetTxBytesPerSec = d.netPrev.rate(rx, tx)
 
 	return out
+}
+
+// readCPUTotals parses /proc/stat's aggregate "cpu" line (all cores summed,
+// in USER_HZ ticks since boot) into idle and total time. A single reading
+// is meaningless on its own — cpuSample.percent turns two of them, taken
+// ~5s apart by the dashboard's normal poll cadence, into a percentage.
+func readCPUTotals() (idle, total uint64, err error) {
+	f, err := os.Open("/proc/stat")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return 0, 0, fmt.Errorf("empty /proc/stat")
+	}
+	fields := strings.Fields(sc.Text())
+	if len(fields) < 8 || fields[0] != "cpu" {
+		return 0, 0, fmt.Errorf("unexpected /proc/stat format: %q", sc.Text())
+	}
+	// user nice system idle iowait irq softirq [steal [guest [guest_nice]]]
+	vals := make([]uint64, 0, len(fields)-1)
+	for _, f := range fields[1:] {
+		v, _ := strconv.ParseUint(f, 10, 64)
+		vals = append(vals, v)
+	}
+	for _, v := range vals {
+		total += v
+	}
+	idle = vals[3] // idle
+	if len(vals) > 4 {
+		idle += vals[4] // + iowait
+	}
+	return idle, total, nil
+}
+
+// cpuSample mirrors netSample: remembers the last cumulative /proc/stat
+// reading so consecutive HostStats polls turn it into a percentage instead
+// of a meaningless running tick count.
+type cpuSample struct {
+	mu    sync.Mutex
+	idle  uint64
+	total uint64
+	init  bool
+}
+
+func (s *cpuSample) percent(idle, total uint64) float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var pct float64
+	if s.init && total > s.total {
+		deltaTotal := total - s.total
+		// A smaller idle delta than total delta means less idle time passed
+		// than wall time — the rest was busy. Guards the same counter-reset
+		// case netSample does (idle "decreasing" would go negative here).
+		if idle >= s.idle {
+			deltaIdle := idle - s.idle
+			if deltaTotal > deltaIdle {
+				pct = float64(deltaTotal-deltaIdle) / float64(deltaTotal) * 100
+			}
+		}
+	}
+	s.idle, s.total, s.init = idle, total, true
+	return pct
 }
 
 func readMeminfo() (total, available uint64, err error) {

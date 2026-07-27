@@ -45,6 +45,7 @@ func ContainerName(serverName string) string { return "paldeck-" + serverName }
 type Docker struct {
 	cli     *client.Client
 	netPrev netSample // last cumulative network reading, for HostStats' rate calc (see host.go)
+	cpuPrev cpuSample // last cumulative CPU-ticks reading, for HostStats' cpu% calc (see host.go)
 }
 
 func New() (*Docker, error) {
@@ -548,7 +549,7 @@ func (d *Docker) ImportSave(ctx context.Context, srcID, dstID string) error {
 // a source for ImportSave.
 type ImportCandidate struct {
 	ContainerID string `json:"containerId"`
-	Name        string `json:"name"` // container name, minus Docker's leading "/"
+	Name        string `json:"name"`       // container name, minus Docker's leading "/"
 	ServerName  string `json:"serverName"` // SERVER_NAME env, if present — friendlier than the container name
 	Running     bool   `json:"running"`
 }

@@ -16,7 +16,7 @@ import { ServerCard } from './components/ServerRow'
 import { ServerDetail, type DetailTab } from './components/ServerDetail'
 import { NewServerModal } from './components/NewServerModal'
 import { CreatedModal } from './components/CreatedModal'
-import { HostCard } from './components/HostCard'
+import { HostPage } from './components/HostPage'
 
 const APP_VERSION = 'v0.4-dev'
 
@@ -42,6 +42,9 @@ const IcPulse = () => (
 const IcUsers = () => (
   <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" /><circle cx="17" cy="9" r="2.6" /><path d="M15.5 14.2c2.7.3 4.9 2.5 4.9 5.8" /></svg>
 )
+const IcCpu = () => (
+  <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5" /><path d="M9 2.5v3M15 2.5v3M9 18.5v3M15 18.5v3M2.5 9h3M2.5 15h3M18.5 9h3M18.5 15h3" /></svg>
+)
 
 export default function App() {
   const [servers, setServers] = useState<Server[]>([])
@@ -55,9 +58,10 @@ export default function App() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [detailTab, setDetailTab] = useState<DetailTab | undefined>(undefined)
   const [showSettings, setShowSettings] = useState(false)
+  const [showHost, setShowHost] = useState(false)
   // Per-running-server metrics for the home stats + live player counts.
   const [metricsById, setMetricsById] = useState<Record<string, ServerMetrics>>({})
-  // Host-wide resources (memory/disk/network) for the overview's Host card.
+  // Host-wide resources (CPU/memory/disk/network) for the dedicated Host page.
   const [hostStats, setHostStats] = useState<HostStats | undefined>(undefined)
   // The success dialog reveals the admin password once, right after create.
   const [created, setCreated] = useState<CreatedServer | null>(null)
@@ -136,10 +140,11 @@ export default function App() {
   const runningCount = servers.filter((x) => x.status === 'running').length
   const playersOnline = Object.values(metricsById).reduce((n, m) => n + (m.players ?? 0), 0)
 
-  // one navigation door: switching view always resets the settings page and
-  // the deep-link tab intent
+  // one navigation door: switching view always resets the settings/host
+  // pages and the deep-link tab intent
   const openServer = (id: string | null, tab?: DetailTab) => {
     setShowSettings(false)
+    setShowHost(false)
     setDetailTab(tab)
     setOpenId(id)
   }
@@ -165,7 +170,7 @@ export default function App() {
 
         <div className="sect">Manage</div>
         <button
-          className={`nav ${openId === null && !showSettings ? 'on' : ''}`}
+          className={`nav ${openId === null && !showSettings && !showHost ? 'on' : ''}`}
           onClick={() => openServer(null)}
         >
           <span className="ic"><IcServers /></span> Servers
@@ -174,7 +179,7 @@ export default function App() {
           {servers.map((s) => (
             <button
               key={s.id}
-              className={`subitem ${s.status === 'running' ? 'run' : ''} ${openId === s.id && !showSettings ? 'on' : ''}`}
+              className={`subitem ${s.status === 'running' ? 'run' : ''} ${openId === s.id && !showSettings && !showHost ? 'on' : ''}`}
               onClick={() => openServer(s.id)}
             >
               <i /> {s.name}
@@ -193,8 +198,23 @@ export default function App() {
 
         <div className="sect">System</div>
         <button
+          className={`nav ${showHost ? 'on' : ''}`}
+          onClick={() => {
+            setOpenId(null)
+            setShowSettings(false)
+            setShowHost(true)
+          }}
+          title="Host resources"
+        >
+          <span className="ic"><IcCpu /></span> Host
+        </button>
+        <button
           className={`nav ${showSettings ? 'on' : ''}`}
-          onClick={() => setShowSettings(true)}
+          onClick={() => {
+            setOpenId(null)
+            setShowHost(false)
+            setShowSettings(true)
+          }}
           title="Panel info & settings"
         >
           <span className="ic"><IcGear /></span> Settings
@@ -213,7 +233,9 @@ export default function App() {
             <i className={runningCount > 0 ? 'up' : ''} /> {runningCount} of {servers.length} running
           </span>
         </div>
-        {showSettings ? (
+        {showHost ? (
+          <HostPage stats={hostStats} />
+        ) : showSettings ? (
           <AppSettings servers={servers} running={runningCount} />
         ) : open ? (
           <ServerDetail
@@ -226,7 +248,6 @@ export default function App() {
           />
         ) : (
           <>
-            <HostCard stats={hostStats} />
             <div className="stat-grid">
               <div className="stat-tile">
                 <span className="stat-ic"><IcServers /></span>
