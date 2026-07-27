@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -13,6 +14,14 @@ import (
 	"paldeck/internal/palworld"
 	"paldeck/internal/store"
 )
+
+// Real player UIDs are 32 hex chars (e.g. "D2C229A3000000000000000000000000").
+// REST occasionally reports playerId as the literal string "None" — Unreal's
+// stringified-uninitialized-FName — for a player who's still mid-connect and
+// whose id hasn't been populated yet. Without this guard that garbage value
+// gets treated as a real UID and remembered permanently, creating a
+// duplicate "offline" ghost of someone who's actually online.
+var validPlayerID = regexp.MustCompile(`^[0-9A-Fa-f]{32}$`)
 
 // Operator endpoints (spec 003): live metrics, players, broadcast, kick/ban.
 // The Go backend makes all Palworld REST calls — the admin password never
@@ -157,6 +166,9 @@ func (a *api) players(w http.ResponseWriter, r *http.Request) {
 			restOK = true
 			now := time.Now()
 			for _, p := range list {
+				if !validPlayerID.MatchString(p.PlayerID) {
+					continue // mid-connect placeholder ("None") — real id shows up on the next poll
+				}
 				uid := strings.ToLower(p.PlayerID) // REST uppercases; the save's own guid() encoding is lowercase
 				byUID[uid] = &PlayerEntry{
 					Name: p.Name, PlayerID: p.PlayerID, UserID: p.UserID, Online: true,
@@ -170,6 +182,9 @@ func (a *api) players(w http.ResponseWriter, r *http.Request) {
 
 	if identities, err := a.st.PlayerIdentities(sv.ID); err == nil {
 		for uid, id := range identities {
+			if !validPlayerID.MatchString(uid) {
+				continue // guards against any bad row from before this validation existed
+			}
 			if _, ok := byUID[uid]; ok {
 				continue // already have the live entry, which is always fresher
 			}

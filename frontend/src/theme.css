@@ -366,6 +366,61 @@ th.sortable:hover { color: var(--ink); }
 .pal-ic-lg { width: 40px; height: 40px; }
 .chip-alpha { color: var(--warn); border-color: #e0a63c55; }
 .chip-owned { color: var(--run); border-color: #3fbf7f55; }
+
+/* ── breeding: numbered step rows ── */
+.bstep {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 14px;
+  padding: 13px 15px; margin-bottom: 10px;
+}
+.bstepnum {
+  flex: none; width: 24px; height: 24px; border-radius: 50%;
+  background: color-mix(in srgb, var(--acc) 14%, transparent); border: 1px solid color-mix(in srgb, var(--acc) 35%, transparent);
+  color: var(--acc-strong); display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+}
+.bpal { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 82px; text-align: center; }
+.bpal .bname { font-size: 12px; font-weight: 600; line-height: 1.25; }
+.bpal .btag {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.bpal .btag.owned { color: var(--run); }
+.bpal .btag.catch { color: var(--warn); }
+.bpal .bloc { font-size: 9.5px; color: var(--mut); font-family: var(--mono, monospace); }
+.bic-wrap { position: relative; flex: none; }
+.bic {
+  width: 40px; height: 40px; border-radius: 50%; background: var(--panel); flex: none;
+  border: 2px solid var(--line); display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.bic img { width: 100%; height: 100%; object-fit: cover; }
+.bic.owned { border-color: var(--run); background: color-mix(in srgb, var(--run) 10%, var(--panel)); }
+.bic.catch { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); }
+.bic.result { width: 46px; height: 46px; border-color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, var(--panel)); }
+.bic-badge {
+  position: absolute; bottom: -2px; right: -2px; width: 15px; height: 15px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800;
+  border: 2px solid var(--panel2); color: #fff;
+}
+.bic-badge.owned { background: var(--run); }
+.bic-badge.catch { background: var(--warn); color: #221a05; }
+.bx { color: var(--mut); font-size: 15px; flex: none; width: 16px; text-align: center; }
+.beq { color: var(--acc-strong); font-size: 17px; flex: none; margin: 0 -2px; }
+.bresult { margin-left: auto; }
+.bresult .bname { color: var(--acc-strong); font-weight: 700; }
+.breach {
+  display: flex; align-items: center; gap: 8px; margin-top: 2px; padding: 11px 15px;
+  background: color-mix(in srgb, var(--acc) 10%, transparent); border: 1px solid color-mix(in srgb, var(--acc) 25%, transparent);
+  border-radius: 12px; font-size: 13px; color: var(--acc-strong); font-weight: 600;
+}
+.balt-toggle {
+  font-size: 11px; color: var(--mut); background: none; border: 1px dashed var(--line);
+  border-radius: 6px; padding: 2px 8px; margin-top: 2px; cursor: pointer;
+}
+.balt-toggle:hover { color: var(--ink); border-color: var(--line2, var(--line)); }
+.balt-box {
+  width: 100%; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+}
 .pd-label { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--mut); font-weight: 600; margin-bottom: 7px; }
 .iv-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .iv-name { width: 64px; font-size: 12.5px; color: var(--mut); }
